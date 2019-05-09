@@ -1,0 +1,13 @@
+[package]
+name = "llrp-message"
+version = "0.1.0"
+authors = ["Michael Chesser"]
+edition = "2018"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "0.15.34", features = ["full"] }
+proc-macro2 = "0.4.30"
+quote = "0.6.12"

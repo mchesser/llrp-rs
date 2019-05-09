@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "llrp",
+    "llrp-common",
+    "llrp-message",
+]

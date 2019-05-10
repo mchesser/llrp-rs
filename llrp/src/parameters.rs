@@ -1,86 +1,87 @@
+#[allow(non_camel_case_types)]
 pub enum LLRPStatus {
     /// The message was recieved and processed successfully
-    Success = 0,
+    M_Success = 0,
 
     /// An error occured with a parameter of this message
-    ParameterError = 100,
+    M_ParameterError = 100,
 
     /// An error occured with a parameter of this message
-    FieldError = 101,
+    M_FieldError = 101,
 
     /// Unexpected parameter was missing from this message
-    UnexpectedParameter = 102,
+    M_UnexpectedParameter = 102,
 
     /// A required message was missing from this message
-    MissingParameter = 103,
+    M_MissingParameter = 103,
 
     /// Indicate that a parameter, for which there must only be one instance at the Reader, was seen
     /// more than once in this message.
-    DuplicateParameter = 104,
+    M_DuplicateParameter = 104,
 
     /// The maximum number of instances of the parameter has been exceeded at the Reader.
-    OverflowParameter = 105,
+    M_OverflowParameter = 105,
 
     /// The maximum number of instances of the field has been exceeded at the Reader.
-    OverflowField = 106,
+    M_OverflowField = 106,
 
     /// An unknown parameter was received in the message.
-    UnknownParameter = 107,
+    M_UnknownParameter = 107,
 
     /// The field is unknown or not found at the Reader.
-    UnknownField = 108,
+    M_UnknownField = 108,
 
     /// An unsupported message type was received.
-    UnsupportedMessage = 109,
+    M_UnsupportedMessage = 109,
 
     /// The LLRP version in the received message is not supported by the Reader.
-    UnsupportedVersion = 110,
+    M_UnsupportedVersion = 110,
 
     /// The Parameter in the received message is not supported by the Reader.
-    UnsupportedParameter = 111,
+    M_UnsupportedParameter = 111,
 
     /// The message received was unexpected by the Reader.
-    UnexpectedMessage = 112,
+    M_UnexpectedMessage = 112,
 
     /// An error occurred with a parameter of this parameter.
-    ParameterErrorParameter = 200,
+    P_ParameterErrorParameter = 200,
 
     /// An error occurred with a field of this parameter.
-    FieldError = 201,
+    P_FieldError = 201,
 
     /// An unexpected parameter was received with this message.
-    UnexpectedParameter = 202,
+    P_UnexpectedParameter = 202,
 
     /// A required parameter was missing from this parameter.
-    MissingParameter = 203,
+    P_MissingParameter = 203,
 
     /// A parameter, for which there must only be one instance, was seen more than once in this
     /// parameter.
-    DuplicateParameter = 204,
+    P_DuplicateParameter = 204,
 
     /// The maximum number of instances of the parameter has been exceeded at the Reader.
-    OverflowParameter = 205,
+    P_OverflowParameter = 205,
 
     /// The maximum number of instances of the field has been exceeded at the Reader.
-    OverflowField = 206,
+    P_OverflowField = 206,
 
     /// An unknown parameter was received with this message.
-    UnknownParameter = 207,
+    P_UnknownParameter = 207,
 
     /// The field is unknown or not found at the Reader.
-    UnknownField = 208,
+    P_UnknownField = 208,
 
     /// An unsupported parameter was received.
-    UnsupportedParameter = 209,
+    P_UnsupportedParameter = 209,
 
     /// The field value was considered invalid for a non specific reason
-    InvalidField = 300,
+    A_InvalidField = 300,
 
     /// The field value did not fall within an acceptable range
-    OutOfRange = 301,
+    A_OutOfRange = 301,
 
     /// There is a problem on the reader
-    DeviceError = 401,
+    R_DeviceError = 401,
 }
 
 pub struct CustomParameter;

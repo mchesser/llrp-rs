@@ -396,12 +396,11 @@ pub struct EnableEventsAndReports;
 #[llrp_message(id = 1023)]
 pub struct CustomMessage {}
 
-// Errors: Typically the errors in the LLRP defined messages are conveyed inside of the
-// responses from the Reader. However, in cases where the message received by the Reader contains an
-// unsupported message type, or a CUSTOM_MESSAGE with unsupported parameters or fields, the
-// Reader SHALL respond with this generic error message.
-
+/// Typically the errors in the LLRP defined messages are conveyed inside of the responses from the
+/// Reader. However, in cases where the message received by the Reader contains an unsupported
+/// message type, or a CUSTOM_MESSAGE with unsupported parameters or fields, the Reader will respond
+/// with this generic error message.
 #[llrp_message(id = 1000)]
 pub struct ErrorMessage {
-    error: LLRPStatus
+    error: LLRPStatus,
 }

@@ -1,6 +1,6 @@
 pub mod messages;
 pub mod deserializer;
-pub mod types;
+pub mod parameters;
 
 use std::io;
 

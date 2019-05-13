@@ -2,7 +2,7 @@ use std::io;
 
 use byteorder::{BigEndian, ReadBytesExt};
 
-use llrp_common::DecodableMessage;
+use llrp_common::LLRPDecodable;
 
 use crate::messages::*;
 
@@ -42,112 +42,147 @@ pub fn deserialize_raw<R: io::Read>(mut reader: R) -> io::Result<BinaryMessage> 
     })
 }
 
-pub fn deserialize_message(message_type: u16, data: &[u8]) -> io::Result<Box<dyn std::any::Any>> {
+#[rustfmt::skip]
+pub fn deserialize_message(message_type: u16, data: &[u8]) -> io::Result<Message> {
     let message = match message_type {
         GetSupportedVersion::ID => {
-            Box::new(GetSupportedVersion::decode(data)?) as Box<dyn std::any::Any>
+            Message::GetSupportedVersion(GetSupportedVersion::decode(data)?.0)
         }
         GetSupportedVersionResponse::ID => {
-            Box::new(GetSupportedVersionResponse::decode(data)?) as Box<dyn std::any::Any>
+            Message::GetSupportedVersionResponse(GetSupportedVersionResponse::decode(data)?.0)
         }
         SetProtocolVersion::ID => {
-            Box::new(SetProtocolVersion::decode(data)?) as Box<dyn std::any::Any>
+            Message::SetProtocolVersion(SetProtocolVersion::decode(data)?.0)
         }
         SetProtocolVersionResponse::ID => {
-            Box::new(SetProtocolVersionResponse::decode(data)?) as Box<dyn std::any::Any>
+            Message::SetProtocolVersionResponse(SetProtocolVersionResponse::decode(data)?.0)
         }
-
         GetReaderCapabilities::ID => {
-            Box::new(GetReaderCapabilities::decode(data)?) as Box<dyn std::any::Any>
+            Message::GetReaderCapabilities(GetReaderCapabilities::decode(data)?.0)
         }
         GetReaderCapabilitiesResponse::ID => {
-            Box::new(GetReaderCapabilitiesResponse::decode(data)?) as Box<dyn std::any::Any>
+            Message::GetReaderCapabilitiesResponse(GetReaderCapabilitiesResponse::decode(data)?.0)
         }
-
-        AddRoSpec::ID => Box::new(AddRoSpec::decode(data)?) as Box<dyn std::any::Any>,
+        AddRoSpec::ID => {
+            Message::AddRoSpec(AddRoSpec::decode(data)?.0)
+        }
         AddRoSpecResponse::ID => {
-            Box::new(AddRoSpecResponse::decode(data)?) as Box<dyn std::any::Any>
+            Message::AddRoSpecResponse(AddRoSpecResponse::decode(data)?.0)
         }
-        DeleteRoSpec::ID => Box::new(DeleteRoSpec::decode(data)?) as Box<dyn std::any::Any>,
+        DeleteRoSpec::ID => {
+            Message::DeleteRoSpec(DeleteRoSpec::decode(data)?.0)
+        }
         DeleteRoSpecResponse::ID => {
-            Box::new(DeleteRoSpecResponse::decode(data)?) as Box<dyn std::any::Any>
+            Message::DeleteRoSpecResponse(DeleteRoSpecResponse::decode(data)?.0)
         }
-        StartRoSpec::ID => Box::new(StartRoSpec::decode(data)?) as Box<dyn std::any::Any>,
+        StartRoSpec::ID => {
+            Message::StartRoSpec(StartRoSpec::decode(data)?.0)
+        }
         StartRoSpecResponse::ID => {
-            Box::new(StartRoSpecResponse::decode(data)?) as Box<dyn std::any::Any>
+            Message::StartRoSpecResponse(StartRoSpecResponse::decode(data)?.0)
         }
-        StopRoSpec::ID => Box::new(StopRoSpec::decode(data)?) as Box<dyn std::any::Any>,
+        StopRoSpec::ID => {
+            Message::StopRoSpec(StopRoSpec::decode(data)?.0)
+        }
         StopRoSpecResponse::ID => {
-            Box::new(StopRoSpecResponse::decode(data)?) as Box<dyn std::any::Any>
+            Message::StopRoSpecResponse(StopRoSpecResponse::decode(data)?.0)
         }
-        EnableRoSpec::ID => Box::new(EnableRoSpec::decode(data)?) as Box<dyn std::any::Any>,
+        EnableRoSpec::ID => {
+            Message::EnableRoSpec(EnableRoSpec::decode(data)?.0)
+        }
         EnableRoSpecResponse::ID => {
-            Box::new(EnableRoSpecResponse::decode(data)?) as Box<dyn std::any::Any>
+            Message::EnableRoSpecResponse(EnableRoSpecResponse::decode(data)?.0)
         }
-        DisableRoSpec::ID => Box::new(DisableRoSpec::decode(data)?) as Box<dyn std::any::Any>,
+        DisableRoSpec::ID => {
+            Message::DisableRoSpec(DisableRoSpec::decode(data)?.0)
+        }
         DisableRoSpecResponse::ID => {
-            Box::new(DisableRoSpecResponse::decode(data)?) as Box<dyn std::any::Any>
+            Message::DisableRoSpecResponse(DisableRoSpecResponse::decode(data)?.0)
         }
-        GetRoSpecs::ID => Box::new(GetRoSpecs::decode(data)?) as Box<dyn std::any::Any>,
+        GetRoSpecs::ID => {
+            Message::GetRoSpecs(GetRoSpecs::decode(data)?.0)
+        }
         GetRoSpecsResponse::ID => {
-            Box::new(GetRoSpecsResponse::decode(data)?) as Box<dyn std::any::Any>
+            Message::GetRoSpecsResponse(GetRoSpecsResponse::decode(data)?.0)
         }
-
-        AddAccessSpec::ID => Box::new(AddAccessSpec::decode(data)?) as Box<dyn std::any::Any>,
+        AddAccessSpec::ID => {
+            Message::AddAccessSpec(AddAccessSpec::decode(data)?.0)
+        }
         AddAccessSpecResponse::ID => {
-            Box::new(AddAccessSpecResponse::decode(data)?) as Box<dyn std::any::Any>
+            Message::AddAccessSpecResponse(AddAccessSpecResponse::decode(data)?.0)
         }
-        DeleteAccessSpec::ID => Box::new(DeleteAccessSpec::decode(data)?) as Box<dyn std::any::Any>,
+        DeleteAccessSpec::ID => {
+            Message::DeleteAccessSpec(DeleteAccessSpec::decode(data)?.0)
+        }
         DeleteAccessSpecResponse::ID => {
-            Box::new(DeleteAccessSpecResponse::decode(data)?) as Box<dyn std::any::Any>
+            Message::DeleteAccessSpecResponse(DeleteAccessSpecResponse::decode(data)?.0)
         }
-        EnableAccessSpec::ID => Box::new(EnableAccessSpec::decode(data)?) as Box<dyn std::any::Any>,
+        EnableAccessSpec::ID => {
+            Message::EnableAccessSpec(EnableAccessSpec::decode(data)?.0)
+        }
         EnableAccessSpecResponse::ID => {
-            Box::new(EnableAccessSpecResponse::decode(data)?) as Box<dyn std::any::Any>
+            Message::EnableAccessSpecResponse(EnableAccessSpecResponse::decode(data)?.0)
         }
         DisableAccessSpec::ID => {
-            Box::new(DisableAccessSpec::decode(data)?) as Box<dyn std::any::Any>
+            Message::DisableAccessSpec(DisableAccessSpec::decode(data)?.0)
         }
         DisableAccessSpecResponse::ID => {
-            Box::new(DisableAccessSpecResponse::decode(data)?) as Box<dyn std::any::Any>
+            Message::DisableAccessSpecResponse(DisableAccessSpecResponse::decode(data)?.0)
         }
-        GetAccessSpecs::ID => Box::new(GetAccessSpecs::decode(data)?) as Box<dyn std::any::Any>,
+        GetAccessSpecs::ID => {
+            Message::GetAccessSpecs(GetAccessSpecs::decode(data)?.0)
+        }
         GetAccessSpecsResponse::ID => {
-            Box::new(GetAccessSpecsResponse::decode(data)?) as Box<dyn std::any::Any>
+            Message::GetAccessSpecsResponse(GetAccessSpecsResponse::decode(data)?.0)
         }
-        ClientRequestOp::ID => Box::new(ClientRequestOp::decode(data)?) as Box<dyn std::any::Any>,
+        ClientRequestOp::ID => {
+            Message::ClientRequestOp(ClientRequestOp::decode(data)?.0)
+        }
         ClientRequestOpResponse::ID => {
-            Box::new(ClientRequestOpResponse::decode(data)?) as Box<dyn std::any::Any>
+            Message::ClientRequestOpResponse(ClientRequestOpResponse::decode(data)?.0)
         }
-
-        GetReaderConfig::ID => Box::new(GetReaderConfig::decode(data)?) as Box<dyn std::any::Any>,
+        GetReaderConfig::ID => {
+            Message::GetReaderConfig(GetReaderConfig::decode(data)?.0)
+        }
         GetReaderConfigResponse::ID => {
-            Box::new(GetReaderConfigResponse::decode(data)?) as Box<dyn std::any::Any>
+            Message::GetReaderConfigResponse(GetReaderConfigResponse::decode(data)?.0)
         }
-        SetReaderConfig::ID => Box::new(SetReaderConfig::decode(data)?) as Box<dyn std::any::Any>,
+        SetReaderConfig::ID => {
+            Message::SetReaderConfig(SetReaderConfig::decode(data)?.0)
+        }
         SetReaderConfigResponse::ID => {
-            Box::new(SetReaderConfigResponse::decode(data)?) as Box<dyn std::any::Any>
+            Message::SetReaderConfigResponse(SetReaderConfigResponse::decode(data)?.0)
         }
-        CloseConnection::ID => Box::new(CloseConnection::decode(data)?) as Box<dyn std::any::Any>,
+        CloseConnection::ID => {
+            Message::CloseConnection(CloseConnection::decode(data)?.0)
+        }
         CloseConnectionResponse::ID => {
-            Box::new(CloseConnectionResponse::decode(data)?) as Box<dyn std::any::Any>
+            Message::CloseConnectionResponse(CloseConnectionResponse::decode(data)?.0)
         }
-
-        GetReport::ID => Box::new(GetReport::decode(data)?) as Box<dyn std::any::Any>,
-        RoAccessReport::ID => Box::new(RoAccessReport::decode(data)?) as Box<dyn std::any::Any>,
+        GetReport::ID => {
+            Message::GetReport(GetReport::decode(data)?.0)
+        }
+        RoAccessReport::ID => {
+            Message::RoAccessReport(RoAccessReport::decode(data)?.0)
+        }
+        KeepAlive::ID => {
+            Message::KeepAlive(KeepAlive::decode(data)?.0)
+        }
+        KeepAliveAck::ID => {
+            Message::KeepAliveAck(KeepAliveAck::decode(data)?.0)
+        }
         ReaderEventNotification::ID => {
-            Box::new(ReaderEventNotification::decode(data)?) as Box<dyn std::any::Any>
+            Message::ReaderEventNotification(ReaderEventNotification::decode(data)?.0)
         }
-        KeepAlive::ID => Box::new(KeepAlive::decode(data)?) as Box<dyn std::any::Any>,
-        KeepAliveAck::ID => Box::new(KeepAliveAck::decode(data)?) as Box<dyn std::any::Any>,
         EnableEventsAndReports::ID => {
-            Box::new(EnableEventsAndReports::decode(data)?) as Box<dyn std::any::Any>
+            Message::EnableEventsAndReports(EnableEventsAndReports::decode(data)?.0)
         }
-
-        CustomMessage::ID => Box::new(CustomMessage::decode(data)?) as Box<dyn std::any::Any>,
-
-        ErrorMessage::ID => Box::new(ErrorMessage::decode(data)?) as Box<dyn std::any::Any>,
-
+        CustomMessage::ID => {
+            Message::CustomMessage(CustomMessage::decode(data)?.0)
+        }
+        ErrorMessage::ID => {
+            Message::ErrorMessage(ErrorMessage::decode(data)?.0)
+        }
         _ => {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,

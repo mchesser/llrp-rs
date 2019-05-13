@@ -1,6 +1,9 @@
-pub mod messages;
 pub mod deserializer;
+pub mod messages;
 pub mod parameters;
+
+#[cfg(test)]
+mod tests;
 
 use std::io;
 

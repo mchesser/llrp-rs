@@ -1,10 +1,15 @@
+#![recursion_limit = "256"]
+
 extern crate proc_macro;
 
-use self::proc_macro::TokenStream;
+use proc_macro2::TokenStream;
 
+use proc_macro2::Span;
 use quote::quote;
-use syn::parse::{Parse, ParseStream};
-use syn::{parse_macro_input, Expr, Ident, ItemStruct, Token};
+use syn::{
+    parse::{Parse, ParseStream},
+    parse_macro_input, Data, DeriveInput, Expr, Fields, Ident, ItemStruct, Token,
+};
 
 struct Args {
     id: Expr,
@@ -26,25 +31,161 @@ impl Parse for Args {
     }
 }
 
-#[proc_macro_attribute]
-pub fn llrp_message(args: TokenStream, input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as ItemStruct);
-    let args = parse_macro_input!(args as Args);
+fn decode_fields(name: &Ident, fields: &Fields) -> TokenStream {
+    match fields {
+        Fields::Named(ref fields) => {
+            let rest_ident = Ident::new("__rest", Span::call_site());
 
-    let name = input.ident.clone();
+            let mut parse_entries = vec![];
+            let mut struct_body = vec![];
+
+            for field in fields.named.iter() {
+                let field_name = &field.ident;
+                let ty = &field.ty;
+
+                parse_entries.push(quote! {
+                    let (#field_name, #rest_ident) =
+                        <#ty as llrp_common::LLRPDecodable>::decode(#rest_ident)?;
+                });
+
+                struct_body.push(quote!(#field_name));
+            }
+
+            quote! {
+                let #rest_ident = data;
+                #(#parse_entries)*
+                Ok((#name { #(#struct_body,)* }, #rest_ident))
+            }
+        }
+        Fields::Unnamed(_) => panic!("`llrp_value` unsupported for tuple structs"),
+        Fields::Unit => {
+            quote! {
+                if data.len() != 0 {
+                    return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid length").into());
+                }
+                Ok((#name, data))
+            }
+        }
+    }
+}
+
+#[proc_macro_attribute]
+pub fn llrp_message(
+    args: proc_macro::TokenStream,
+    input: proc_macro::TokenStream,
+) -> proc_macro::TokenStream {
+    let input: ItemStruct = parse_macro_input!(input as ItemStruct);
+
+    let args = parse_macro_input!(args as Args);
     let id = args.id;
+
+    let struct_name = input.ident.clone();
+    let decode_fields = decode_fields(&struct_name, &input.fields);
 
     let expanded = quote! {
         #input
 
-        impl llrp_common::DecodableMessage for #name {
+        impl llrp_common::LLRPDecodable for #struct_name {
             const ID: u16 = #id;
 
-            fn decode(data: &[u8]) -> std::io::Result<Self> {
-                unimplemented!()
+            fn decode(data: &[u8]) -> llrp_common::Result<(Self, &[u8])> {
+                #decode_fields
             }
         }
     };
 
-    TokenStream::from(expanded)
+    proc_macro::TokenStream::from(expanded)
+}
+
+#[proc_macro_attribute]
+pub fn llrp_parameter(
+    args: proc_macro::TokenStream,
+    input: proc_macro::TokenStream,
+) -> proc_macro::TokenStream {
+    let input: ItemStruct = parse_macro_input!(input as ItemStruct);
+
+    let args = parse_macro_input!(args as Args);
+    let id = args.id;
+
+    let struct_name = input.ident.clone();
+    let decode_fields = decode_fields(&struct_name, &input.fields);
+
+    let expanded = quote! {
+        #input
+
+        impl llrp_common::LLRPDecodable for #struct_name {
+            const ID: u16 = #id;
+
+            fn decode(data: &[u8]) -> llrp_common::Result<(Self, &[u8])> {
+                eprintln!("\nparsing: {}", stringify!(#struct_name));
+                eprintln!("data = {:?}", data);
+                // [6-bit resv, 10-bit message type]
+                let __type = u16::from_be_bytes([data[0], data[1]]) & 0b11_1111_1111;
+                eprintln!("type = {}", __type);
+                if __type != Self::ID {
+                    return Err(llrp_common::Error::InvalidType(__type))
+                }
+
+                // 16-bit length
+                let __len = u16::from_be_bytes([data[2], data[3]]) as usize;
+                eprintln!("len = {} (data.len() = {})", __len, data.len());
+
+                if __len > data.len() {
+                    // Length was larger than the remaining data
+                    return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid length").into());
+                }
+
+                // Decode the inner fields for this parameter
+                let result: llrp_common::Result<(Self, &[u8])> = {
+                    let data = &data[4..__len];
+                    #decode_fields
+                };
+                let (inner, __rest) = result?;
+
+                // Ensure that all bytes were consumed when parsing the struct fields
+                if __rest.len() != 0 {
+                    eprintln!("__rest.len() = {}", __rest.len());
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "Did not use consume all bytes in the parameter when inner parameters",
+                    )
+                    .into());
+                }
+
+                Ok((inner, &data[__len..]))
+            }
+        }
+    };
+
+    proc_macro::TokenStream::from(expanded)
+}
+
+#[proc_macro_derive(TryFromU16)]
+pub fn derive_try_from_u16(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    let name = input.ident;
+
+    let possible_matches = match input.data {
+        Data::Enum(ref inner) => inner.variants.iter().map(|v| {
+            let name = &v.ident;
+            quote!(__value if __value == #name as u16 => #name)
+        }),
+        _ => panic!("Only supported for enums"),
+    };
+
+    let expanded = quote! {
+        impl std::convert::TryFrom<u16> for #name {
+            type Error = u16;
+            fn try_from(value: u16) -> Result<#name, u16> {
+                use #name::*;
+                let result = match value {
+                     #(#possible_matches,)*
+                     _ => return Err(value)
+                };
+                Ok(result)
+            }
+        }
+    };
+
+    proc_macro::TokenStream::from(expanded)
 }

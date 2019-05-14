@@ -361,12 +361,12 @@ pub struct GetReport;
 /// Contains the results of the RO and Access operations
 #[llrp_message(id = 61)]
 pub struct RoAccessReport {
-    pub inventory_access_report_data: Option<Vec<TagReportData>>,
+    pub inventory_access_report_data: Vec<TagReportData>,
 
-    pub rf_survey_report_data: Option<Vec<()>>,
+    pub rf_survey_report_data: Vec<()>,
 
     /// Optional custom parameters
-    pub custom: Option<Vec<CustomParameter>>,
+    pub custom: Vec<CustomParameter>,
 }
 
 /// Message issued by the reader to the client

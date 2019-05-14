@@ -1,3 +1,4 @@
+use llrp_common::TvDecodable;
 use llrp_message::{llrp_parameter, TryFromU16};
 
 use std::{convert::TryFrom, convert::TryInto, io};
@@ -124,6 +125,7 @@ pub struct ParameterError {
     pub parameter_error: Option<Box<ParameterError>>,
 }
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct CustomParameter;
 impl llrp_common::LLRPDecodable for CustomParameter {
     fn decode(data: &[u8]) -> llrp_common::Result<(Self, &[u8])> {
@@ -237,7 +239,7 @@ pub struct RoSpec {
     pub priority: u8,
     pub current_state: u8,
     pub boundary_spec: RoBoundarySpec,
-    pub list_of_specs: Vec<AiSpec>,
+    pub spec_list: Vec<AiSpec>,
     pub report_spec: Option<RoReportSpec>,
 }
 
@@ -281,12 +283,12 @@ pub struct RoSpecStopTrigger {
 
 #[llrp_parameter(id = 183)]
 pub struct AiSpec {
-    // TODO support multiple antennas
+    // FIXME: support multiple antennas
     pub antenna_count: u16,
     pub antenna_id: u16,
 
     pub stop_trigger: AiSpecStopTrigger,
-    pub inventory_spec: Vec<InventorySpec>,
+    pub inventory_specs: Vec<InventorySpec>,
     pub custom: Vec<CustomParameter>,
 }
 
@@ -316,6 +318,7 @@ pub struct InventorySpec {
     pub custom: Vec<CustomParameter>,
 }
 
+#[llrp_parameter(id = 207)]
 pub struct AccessSpec {
     pub id: u32,
     pub antenna_id: u16,
@@ -326,13 +329,117 @@ pub struct AccessSpec {
     pub access_report_spec: Option<()>,
     pub custom: Option<Vec<CustomParameter>>,
 }
-impl llrp_common::LLRPDecodable for AccessSpec {}
 
-pub struct AccessSpecStopTrigger;
-impl llrp_common::LLRPDecodable for AccessSpecStopTrigger {}
+#[llrp_parameter(id = 208)]
+pub struct AccessSpecStopTrigger {
+    pub trigger_type: u8,
+}
 
-pub struct TagReportData;
-impl llrp_common::LLRPDecodable for TagReportData {}
+#[llrp_parameter(id = 240)]
+#[derive(Debug, Eq, PartialEq)]
+pub struct TagReportData {
+    pub epc_data: EpcDataParameter,
+
+    #[tv_param = 9]
+    pub ro_spec_id: Option<u16>,
+
+    #[tv_param = 14]
+    pub spec_index: Option<u16>,
+
+    #[tv_param = 10]
+    pub inventory_param_spec_id: Option<u16>,
+
+    #[tv_param = 1]
+    pub antenna_id: Option<u16>,
+
+    #[tv_param = 6]
+    pub peak_rssi: Option<u8>,
+
+    #[tv_param = 7]
+    pub channel_index: Option<u16>,
+
+    #[tv_param = 2]
+    pub first_seen_timestamp_utc: Option<u64>,
+
+    #[tv_param = 3]
+    pub first_seen_timestamp_uptime: Option<u64>,
+
+    #[tv_param = 4]
+    pub last_seen_timestamp_utc: Option<u64>,
+
+    #[tv_param = 5]
+    pub last_seen_timestamp_uptime: Option<u64>,
+
+    #[tv_param = 8]
+    pub tag_seen_count: Option<u16>,
+
+    pub air_protocol_tag_data: Vec<AirProtocolTagData>,
+
+    #[tv_param = 16]
+    pub access_spec_id: Option<u32>,
+
+    pub op_spec_result: Vec<OpSpecResult>,
+
+    pub custom: Vec<CustomParameter>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum EpcDataParameter {
+    EpcData(EpcData),
+    Epc96([u8; 12]),
+}
+
+impl EpcDataParameter {
+    pub fn as_slice(&self) -> &[u8] {
+        match self {
+            EpcDataParameter::EpcData(data) => &data.epc,
+            EpcDataParameter::Epc96(data) => &*data,
+        }
+    }
+}
+
+impl llrp_common::LLRPDecodable for EpcDataParameter {
+    fn decode(data: &[u8]) -> llrp_common::Result<(Self, &[u8])> {
+        // First try and decoded it as a tv encoded Epc-96 parameter
+        if let (Some(epc), rest) = Option::<[u8; 12]>::decode_tv(data, 13)? {
+            return Ok((EpcDataParameter::Epc96(epc), rest));
+        }
+
+        // Otherwise try and decode it as a TLV encoded EPCData parameter
+        let (data, rest) = EpcData::decode(data)?;
+        Ok((EpcDataParameter::EpcData(data), rest))
+    }
+
+    fn id(&self) -> u16 {
+        match self {
+            EpcDataParameter::Epc96(_) => 13,
+            EpcDataParameter::EpcData(_) => EpcData::ID,
+        }
+    }
+}
+
+#[llrp_parameter(id = 241)]
+#[derive(Debug, Eq, PartialEq)]
+pub struct EpcData {
+    pub epc: Vec<u8>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum AirProtocolTagData {
+    C1G2PC,
+    C1G2XPCW1,
+    C1G2XPCW2,
+    C1G2CRC,
+}
+impl llrp_common::LLRPDecodable for AirProtocolTagData {}
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum OpSpecResult {
+    C1G2OpSpecResult,
+    ClientRequestOpSpecResult,
+}
+impl llrp_common::LLRPDecodable for OpSpecResult {}
+
 
 pub struct ClientRequestResponse;
 impl llrp_common::LLRPDecodable for ClientRequestResponse {}
@@ -359,8 +466,26 @@ impl llrp_common::LLRPDecodable for ReaderEventNotificationSpec {}
 pub struct AntennaProperties;
 impl llrp_common::LLRPDecodable for AntennaProperties {}
 
-pub struct AntennaConfiguration;
-impl llrp_common::LLRPDecodable for AntennaConfiguration {}
+#[llrp_parameter(id = 222)]
+pub struct AntennaConfiguration {
+    pub antenna_id: u16,
+    pub rf_receiver: Option<RfReceiver>,
+    pub rf_transmitter: Option<RfTransmitter>,
+    pub inventory_commands: Vec<C1G2InventoryCommand>,
+    pub custom: Vec<CustomParameter>,
+}
+
+#[llrp_parameter(id = 223)]
+pub struct RfReceiver {
+    pub receiver_sensitivity: u16,
+}
+
+#[llrp_parameter(id = 224)]
+pub struct RfTransmitter {
+    pub hop_table_id: u16,
+    pub channel_index: u16,
+    pub transmit_power: u16,
+}
 
 #[llrp_parameter(id = 237)]
 pub struct RoReportSpec {}
@@ -395,3 +520,33 @@ pub struct UTCTimestamp {
 pub struct ConnectionEventAttempt {
     pub status: StatusCode,
 }
+
+#[llrp_parameter(id = 330)]
+pub struct C1G2InventoryCommand {
+    pub tag_inventory_state_aware: u8,
+    pub filter: Vec<C1G2Filter>,
+    pub rf_control: Option<C1G2RfControl>,
+    pub singulation_control: Option<C1G2SingulationControl>,
+    pub custom: Vec<CustomParameter>,
+}
+
+#[llrp_parameter(id = 331)]
+pub struct C1G2Filter {}
+
+#[llrp_parameter(id = 335)]
+pub struct C1G2RfControl {
+    pub mode_index: u16,
+    pub tari: u16,
+}
+
+#[llrp_parameter(id = 336)]
+pub struct C1G2SingulationControl {
+    // FIXME: session is stored in the first two high-bits, this should be made into an enum
+    pub session: u8,
+    pub tag_population: u16,
+    pub tag_transit_time: u32,
+    pub tag_inventory_state_aware_action: Option<TagInventoryStateAwareSingulationAction>,
+}
+
+#[llrp_parameter(id = 337)]
+pub struct TagInventoryStateAwareSingulationAction {}

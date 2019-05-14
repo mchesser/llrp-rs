@@ -31,22 +31,45 @@ impl Parse for Args {
     }
 }
 
-fn decode_fields(name: &Ident, fields: &Fields) -> TokenStream {
+fn decode_fields(name: &Ident, fields: &mut Fields) -> TokenStream {
     match fields {
-        Fields::Named(ref fields) => {
+        Fields::Named(fields) => {
             let rest_ident = Ident::new("__rest", Span::call_site());
 
             let mut parse_entries = vec![];
             let mut struct_body = vec![];
 
-            for field in fields.named.iter() {
+            for field in fields.named.iter_mut() {
+                let tv_param_attr = {
+                    let pos = field.attrs.iter().position(|x| {
+                        x.path.segments.iter().next().map_or(false, |x| x.ident == "tv_param")
+                    });
+                    pos.map(|i| field.attrs.remove(i))
+                };
+
                 let field_name = &field.ident;
                 let ty = &field.ty;
 
-                parse_entries.push(quote! {
-                    let (#field_name, #rest_ident) =
-                        <#ty as llrp_common::LLRPDecodable>::decode(#rest_ident)?;
-                });
+                match tv_param_attr {
+                    Some(attr) => {
+                        let id = match attr.parse_meta().unwrap() {
+                            syn::Meta::Word(_) | syn::Meta::List(_) => {
+                                panic!("expected `tv_param = id`")
+                            }
+                            syn::Meta::NameValue(value) => value.lit,
+                        };
+                        parse_entries.push(quote! {
+                            let (#field_name, #rest_ident) =
+                                <#ty as llrp_common::TvDecodable>::decode_tv(#rest_ident, #id)?;
+                        });
+                    }
+                    None => {
+                        parse_entries.push(quote! {
+                            let (#field_name, #rest_ident) =
+                                <#ty as llrp_common::LLRPDecodable>::decode(#rest_ident)?;
+                        });
+                    }
+                }
 
                 struct_body.push(quote!(#field_name));
             }
@@ -74,13 +97,13 @@ pub fn llrp_message(
     args: proc_macro::TokenStream,
     input: proc_macro::TokenStream,
 ) -> proc_macro::TokenStream {
-    let input: ItemStruct = parse_macro_input!(input as ItemStruct);
+    let mut input: ItemStruct = parse_macro_input!(input as ItemStruct);
 
     let args = parse_macro_input!(args as Args);
     let id = args.id;
 
     let struct_name = input.ident.clone();
-    let decode_fields = decode_fields(&struct_name, &input.fields);
+    let decode_fields = decode_fields(&struct_name, &mut input.fields);
 
     let expanded = quote! {
         #input
@@ -102,13 +125,13 @@ pub fn llrp_parameter(
     args: proc_macro::TokenStream,
     input: proc_macro::TokenStream,
 ) -> proc_macro::TokenStream {
-    let input: ItemStruct = parse_macro_input!(input as ItemStruct);
+    let mut input: ItemStruct = parse_macro_input!(input as ItemStruct);
 
     let args = parse_macro_input!(args as Args);
     let id = args.id;
 
     let struct_name = input.ident.clone();
-    let decode_fields = decode_fields(&struct_name, &input.fields);
+    let decode_fields = decode_fields(&struct_name, &mut input.fields);
 
     let expanded = quote! {
         #input
@@ -118,6 +141,11 @@ pub fn llrp_parameter(
 
             fn decode(data: &[u8]) -> llrp_common::Result<(Self, &[u8])> {
                 eprintln!("\nparsing: {}", stringify!(#struct_name));
+
+                if data.len() < 2 {
+                    return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid length").into());
+                }
+
                 eprintln!("data = {:?}", data);
                 // [6-bit resv, 10-bit message type]
                 let __type = u16::from_be_bytes([data[0], data[1]]) & 0b11_1111_1111;

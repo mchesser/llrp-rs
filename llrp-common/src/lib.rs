@@ -93,6 +93,15 @@ impl LLRPDecodable for u64 {
     }
 }
 
+impl LLRPDecodable for [u8; 12] {
+    fn decode(data: &[u8]) -> Result<(Self, &[u8])> {
+        if data.len() < 12 {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid length").into());
+        }
+        Ok((data[..12].try_into().unwrap(), &data[12..]))
+    }
+}
+
 impl LLRPDecodable for String {
     fn decode(data: &[u8]) -> Result<(Self, &[u8])> {
         if data.len() < 2 {
@@ -129,7 +138,7 @@ impl<T: LLRPDecodable> LLRPDecodable for Vec<T> {
         let mut output = vec![];
 
         let mut rest = data;
-        loop {
+        while rest.len() > 0 {
             match <T as LLRPDecodable>::decode(rest) {
                 Ok((field, new_rest)) => {
                     output.push(field);
@@ -148,5 +157,25 @@ impl<T: LLRPDecodable> LLRPDecodable for Box<T> {
     fn decode(data: &[u8]) -> Result<(Self, &[u8])> {
         let (result, rest) = <T as LLRPDecodable>::decode(data)?;
         Ok((Box::new(result), rest))
+    }
+}
+
+pub trait TvDecodable: Sized {
+    fn decode_tv(data: &[u8], id: u8) -> Result<(Self, &[u8])>;
+}
+
+impl<T: LLRPDecodable> TvDecodable for Option<T> {
+    fn decode_tv(data: &[u8], id: u8) -> Result<(Self, &[u8])> {
+        if data.len() < 2 {
+            return Ok((None, data));
+        }
+
+        let found_type = data[0] & 0x7F;
+        if ((data[0] & 0x80) == 0) || found_type != id {
+            return Ok((None, data));
+        }
+
+        let (data, rest) = <T as LLRPDecodable>::decode(&data[1..])?;
+        Ok((Some(data), rest))
     }
 }

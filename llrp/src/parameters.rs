@@ -319,6 +319,7 @@ pub struct InventorySpec {
 }
 
 #[llrp_parameter(id = 207)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct AccessSpec {
     pub id: u32,
     pub antenna_id: u16,
@@ -326,14 +327,32 @@ pub struct AccessSpec {
     pub current_state: bool,
     pub ro_spec_id: u32,
     pub stop_trigger: AccessSpecStopTrigger,
-    pub access_report_spec: Option<()>,
-    pub custom: Option<Vec<CustomParameter>>,
+    pub command: AccessCommand,
+    pub report_spec: Option<AccessReportSpec>,
+    pub custom: Vec<CustomParameter>,
 }
 
 #[llrp_parameter(id = 208)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct AccessSpecStopTrigger {
     pub trigger_type: u8,
+    pub operation_count: u16,
 }
+
+#[llrp_parameter(id = 209)]
+#[derive(Debug, Eq, PartialEq)]
+pub struct AccessCommand {
+    pub tag_spec: TagSpec,
+    pub op_spec: Vec<ClientRequestOpSpec>,
+    pub custom: Vec<CustomParameter>,
+}
+
+#[llrp_parameter(id = 239)]
+#[derive(Debug, Eq, PartialEq)]
+pub struct AccessReportSpec {
+
+}
+
 
 #[llrp_parameter(id = 240)]
 #[derive(Debug, Eq, PartialEq)]
@@ -489,9 +508,6 @@ pub struct RfTransmitter {
 
 #[llrp_parameter(id = 237)]
 pub struct RoReportSpec {}
-
-pub struct AccessReportSpec;
-impl llrp_common::LLRPDecodable for AccessReportSpec {}
 
 pub struct KeepAliveSpec;
 impl llrp_common::LLRPDecodable for KeepAliveSpec {}

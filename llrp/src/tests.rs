@@ -379,11 +379,49 @@ fn add_access_spec_blockwrite() {
     match msg {
         Message::AddAccessSpec(x) => {
             let spec = x.access_spec;
-            assert_eq!(spec.id, 431);
-            assert_eq!(spec.antenna_id, 1);
-            assert_eq!(spec.protocol_id, 1);
-            assert_eq!(spec.current_state, false);
-            assert_eq!(spec.ro_spec_id, 1);
+            let expected = AccessSpec {
+                id: 431,
+                antenna_id: 1,
+                protocol_id: 1,
+                current_state: false,
+                ro_spec_id: 1,
+                stop_trigger: AccessSpecStopTrigger {
+                    trigger_type: 0,
+                    operation_count: 1,
+                },
+                command: AccessCommand {
+                    tag_spec: C1G2TagSpec {
+                        tag_pattern1: C1G2TargetTag {
+                            memory_bank_and_match: 0x60,
+                            pointer: 0x0020,
+                            tag_mask: llrp_common::BitArray {
+                                bytes: vec![0xFF],
+                            },
+                            tag_data: llrp_common::BitArray {
+                                bytes: vec![0x0b],
+                            },
+                        },
+                        tag_pattern2: None,
+                    },
+                    op_spec: vec![C1G2BlockWrite {
+                        op_spec_id: 111,
+                        access_password: 0,
+                        memory_bank: 0,
+                        word_ptr: 0x0003,
+                        write_data: vec![0x0021],
+                    }],
+                    custom: vec![],
+                },
+                report_spec: Some(AccessReportSpec {
+                    trigger: 0,
+                }),
+                custom: vec![],
+            };
+
+            eprintln!("{:#?}", spec);
+            eprintln!("{:#?}", expected);
+
+            assert_eq!(spec, expected);
         }
         x => panic!("Invalid message type: {}", x.id()),
     }

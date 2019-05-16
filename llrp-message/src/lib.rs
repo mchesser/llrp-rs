@@ -65,6 +65,7 @@ fn decode_fields(name: &Ident, fields: &mut Fields) -> TokenStream {
                     }
                     None => {
                         parse_entries.push(quote! {
+                            eprintln!("parsing: {}", stringify!(#field_name));
                             let (#field_name, #rest_ident) =
                                 <#ty as llrp_common::LLRPDecodable>::decode(#rest_ident)?;
                         });
@@ -146,7 +147,7 @@ pub fn llrp_parameter(
                     return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid length").into());
                 }
 
-                eprintln!("data = {:?}", data);
+                eprintln!("data = {:02x?}", data);
                 // [6-bit resv, 10-bit message type]
                 let __type = u16::from_be_bytes([data[0], data[1]]) & 0b11_1111_1111;
                 eprintln!("type = {}", __type);

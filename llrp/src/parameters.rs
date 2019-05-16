@@ -1,4 +1,4 @@
-use llrp_common::TvDecodable;
+use llrp_common::{BitArray, TvDecodable};
 use llrp_message::{llrp_parameter, TryFromU16};
 
 use std::{convert::TryFrom, convert::TryInto, io};
@@ -323,7 +323,7 @@ pub struct InventorySpec {
 pub struct AccessSpec {
     pub id: u32,
     pub antenna_id: u16,
-    pub protocol_id: i32,
+    pub protocol_id: u8,
     pub current_state: bool,
     pub ro_spec_id: u32,
     pub stop_trigger: AccessSpecStopTrigger,
@@ -342,17 +342,16 @@ pub struct AccessSpecStopTrigger {
 #[llrp_parameter(id = 209)]
 #[derive(Debug, Eq, PartialEq)]
 pub struct AccessCommand {
-    pub tag_spec: TagSpec,
-    pub op_spec: Vec<ClientRequestOpSpec>,
+    pub tag_spec: C1G2TagSpec,
+    pub op_spec: Vec<C1G2BlockWrite>,
     pub custom: Vec<CustomParameter>,
 }
 
 #[llrp_parameter(id = 239)]
 #[derive(Debug, Eq, PartialEq)]
 pub struct AccessReportSpec {
-
+    pub trigger: u8
 }
-
 
 #[llrp_parameter(id = 240)]
 #[derive(Debug, Eq, PartialEq)]
@@ -458,7 +457,6 @@ pub enum OpSpecResult {
     ClientRequestOpSpecResult,
 }
 impl llrp_common::LLRPDecodable for OpSpecResult {}
-
 
 pub struct ClientRequestResponse;
 impl llrp_common::LLRPDecodable for ClientRequestResponse {}
@@ -566,3 +564,29 @@ pub struct C1G2SingulationControl {
 
 #[llrp_parameter(id = 337)]
 pub struct TagInventoryStateAwareSingulationAction {}
+
+#[llrp_parameter(id = 338)]
+#[derive(Debug, Eq, PartialEq)]
+pub struct C1G2TagSpec {
+    pub tag_pattern1: C1G2TargetTag,
+    pub tag_pattern2: Option<C1G2TargetTag>,
+}
+
+#[llrp_parameter(id = 339)]
+#[derive(Debug, Eq, PartialEq)]
+pub struct C1G2TargetTag {
+    pub memory_bank_and_match: u8,
+    pub pointer: u16,
+    pub tag_mask: BitArray,
+    pub tag_data: BitArray,
+}
+
+#[llrp_parameter(id = 347)]
+#[derive(Debug, Eq, PartialEq)]
+pub struct C1G2BlockWrite {
+    pub op_spec_id: u16,
+    pub access_password: u32,
+    pub memory_bank: u8,
+    pub word_ptr: u16,
+    pub write_data: Vec<u16>,
+}

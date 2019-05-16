@@ -48,11 +48,19 @@ pub trait LLRPDecodable: Sized {
 }
 
 impl LLRPDecodable for () {}
-impl LLRPDecodable for bool {}
 impl LLRPDecodable for i8 {}
 impl LLRPDecodable for i16 {}
 impl LLRPDecodable for i32 {}
 impl LLRPDecodable for i64 {}
+
+impl LLRPDecodable for bool {
+    fn decode(data: &[u8]) -> Result<(Self, &[u8])> {
+        if data.len() < 1 {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid length").into());
+        }
+        Ok((data[0] != 0, &data[1..]))
+    }
+}
 
 impl LLRPDecodable for u8 {
     fn decode(data: &[u8]) -> Result<(Self, &[u8])> {
@@ -150,6 +158,29 @@ impl<T: LLRPDecodable> LLRPDecodable for Vec<T> {
         }
 
         Ok((output, rest))
+    }
+}
+
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub struct BitArray {
+    pub bytes: Vec<u8>,
+}
+
+impl LLRPDecodable for BitArray {
+    fn decode(data: &[u8]) -> Result<(Self, &[u8])> {
+        if data.len() < 2 {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid length").into());
+        }
+
+        let num_bits = u16::from_be_bytes([data[0], data[1]]) as usize;
+        let num_bytes = num_bits / 8;
+
+        if data.len() < 2 + num_bytes {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid length").into());
+        }
+
+        let bytes = data[2..][..num_bytes].into();
+        Ok((BitArray { bytes }, &data[2 + num_bytes..]))
     }
 }
 

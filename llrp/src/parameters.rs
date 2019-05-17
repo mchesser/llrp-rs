@@ -283,9 +283,8 @@ pub struct RoSpecStopTrigger {
 
 #[llrp_parameter(id = 183)]
 pub struct AiSpec {
-    // FIXME: support multiple antennas
-    pub antenna_count: u16,
-    pub antenna_id: u16,
+    #[has_length]
+    pub antenna_ids: Vec<u16>,
 
     pub stop_trigger: AiSpecStopTrigger,
     pub inventory_specs: Vec<InventorySpec>,
@@ -588,5 +587,7 @@ pub struct C1G2BlockWrite {
     pub access_password: u32,
     pub memory_bank: u8,
     pub word_ptr: u16,
+
+    #[has_length]
     pub write_data: Vec<u16>,
 }

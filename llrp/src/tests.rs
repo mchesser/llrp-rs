@@ -159,9 +159,7 @@ fn add_ro_spec() {
             assert_eq!(spec.spec_list.len(), 1);
             let ai_spec = &spec.spec_list[0];
 
-            // FIXME: support multiple antennas
-            assert_eq!(ai_spec.antenna_count, 1);
-            assert_eq!(ai_spec.antenna_id, 1);
+            assert_eq!(ai_spec.antenna_ids, vec![1]);
 
             let ai_stop_trigger = &ai_spec.stop_trigger;
             assert_eq!(ai_stop_trigger.trigger_type, 0);

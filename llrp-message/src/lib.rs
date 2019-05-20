@@ -135,7 +135,7 @@ fn decode_field(data: &Ident, field: &mut Field) -> syn::Result<TokenStream> {
     let ty = &field.ty;
     match attr {
         FieldAttribute::TvParam(tv_id) => {
-            Ok(quote!(<#ty as llrp_common::TvDecodable>::decode_tv(#data, #tv_id)?))
+            Ok(quote!(<#ty as crate::TvDecodable>::decode_tv(#data, #tv_id)?))
         }
 
         FieldAttribute::HasLength => Ok(quote!({
@@ -148,7 +148,7 @@ fn decode_field(data: &Ident, field: &mut Field) -> syn::Result<TokenStream> {
             let mut rest = &#data[2..];
 
             for _ in 0..len {
-                let result = llrp_common::LLRPDecodable::decode(rest)?;
+                let result = crate::LLRPDecodable::decode(rest)?;
                 output.push(result.0);
                 rest = result.1;
             }
@@ -156,7 +156,7 @@ fn decode_field(data: &Ident, field: &mut Field) -> syn::Result<TokenStream> {
             (output, rest)
         })),
 
-        FieldAttribute::None => Ok(quote!(<#ty as llrp_common::LLRPDecodable>::decode(#data)?)),
+        FieldAttribute::None => Ok(quote!(<#ty as crate::LLRPDecodable>::decode(#data)?)),
     }
 }
 
@@ -176,10 +176,10 @@ pub fn llrp_message(
     let expanded = quote! {
         #input
 
-        impl llrp_common::LLRPDecodable for #struct_name {
+        impl crate::LLRPMessage for #struct_name {
             const ID: u16 = #id;
 
-            fn decode(data: &[u8]) -> llrp_common::Result<(Self, &[u8])> {
+            fn decode(data: &[u8]) -> crate::Result<(Self, &[u8])> {
                 #decode_fields
             }
         }
@@ -204,36 +204,18 @@ pub fn llrp_parameter(
     let expanded = quote! {
         #input
 
-        impl llrp_common::LLRPDecodable for #struct_name {
+        impl crate::TlvDecodable for #struct_name {
             const ID: u16 = #id;
 
-            fn decode(data: &[u8]) -> llrp_common::Result<(Self, &[u8])> {
+            fn decode_tlv(data: &[u8]) -> crate::Result<(Self, &[u8])> {
                 eprintln!("\nparsing: {}", stringify!(#struct_name));
 
-                if data.len() < 2 {
-                    return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid length").into());
-                }
-
-                eprintln!("data = {:02x?}", data);
-                // [6-bit resv, 10-bit message type]
-                let __type = u16::from_be_bytes([data[0], data[1]]) & 0b11_1111_1111;
-                eprintln!("type = {}", __type);
-                if __type != Self::ID {
-                    return Err(llrp_common::Error::InvalidType(__type))
-                }
-
-                // 16-bit length
-                let __len = u16::from_be_bytes([data[2], data[3]]) as usize;
-                eprintln!("len = {} (data.len() = {})", __len, data.len());
-
-                if __len > data.len() {
-                    // Length was larger than the remaining data
-                    return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid length").into());
-                }
+                // Parse the tlv header
+                let (param_data, param_len) = crate::parse_tlv_header(data, #id)?;
 
                 // Decode the inner fields for this parameter
-                let result: llrp_common::Result<(Self, &[u8])> = {
-                    let data = &data[4..__len];
+                let result: crate::Result<(Self, &[u8])> = {
+                    let data = param_data;
                     #decode_fields
                 };
                 let (inner, __rest) = result?;
@@ -248,7 +230,7 @@ pub fn llrp_parameter(
                     .into());
                 }
 
-                Ok((inner, &data[__len..]))
+                Ok((inner, &data[param_len..]))
             }
         }
     };
@@ -306,7 +288,7 @@ pub fn derive_llrp_enum(input: proc_macro::TokenStream) -> proc_macro::TokenStre
             let name = &v.ident;
             quote!({
                 __type if __type == #ty::ID => {
-                    let (result, rest) = <#ty as llrp_common::LLRPDecodable>::decode(data)?;
+                    let (result, rest) = <#ty as crate::LLRPDecodable>::decode(data)?;
                     Ok((#name(result), rest))
                 }
             })
@@ -317,10 +299,8 @@ pub fn derive_llrp_enum(input: proc_macro::TokenStream) -> proc_macro::TokenStre
     let expanded = quote! {
         #input
 
-        impl llrp_common::LLRPDecodable for #name {
-            const ID: u16 = 0;
-
-            fn decode(data: &[u8]) -> llrp_common::Result<(Self, &[u8])> {
+        impl crate::LLRPDecodable for #name {
+            fn decode(data: &[u8]) -> crate::Result<(Self, &[u8])> {
                 if data.len() < 2 {
                     return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid length").into());
                 }
@@ -329,7 +309,7 @@ pub fn derive_llrp_enum(input: proc_macro::TokenStream) -> proc_macro::TokenStre
                 let __type = u16::from_be_bytes([data[0], data[1]]) & 0b11_1111_1111;
                 match value {
                      #(#possible_matches,)*
-                     _ => return Err(llrp_common::Error::InvalidType(__type))
+                     _ => return Err(crate::Error::InvalidType(__type))
                 };
 
             }

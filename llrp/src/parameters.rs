@@ -127,8 +127,8 @@ pub struct ParameterError {
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct CustomParameter;
-impl llrp_common::LLRPDecodable for CustomParameter {
-    fn decode(data: &[u8]) -> llrp_common::Result<(Self, &[u8])> {
+impl llrp_common::TlvDecodable for CustomParameter {
+    fn decode_tlv(_data: &[u8]) -> llrp_common::Result<(Self, &[u8])> {
         Err(llrp_common::Error::InvalidType(0))
     }
 }
@@ -140,7 +140,7 @@ pub enum ReaderCapabilitiesRequestedData {
     RegulatoryCapabilities,
     AirProtocolLLRPCapabilities,
 }
-impl llrp_common::LLRPDecodable for ReaderCapabilitiesRequestedData {}
+impl llrp_common::TlvDecodable for ReaderCapabilitiesRequestedData {}
 
 pub struct GeneralDeviceCapabilities {
     /// The IANA Private Enterprise Number (PEN)
@@ -178,7 +178,7 @@ pub struct GeneralDeviceCapabilities {
     /// Reader reports time based on Uptime in its report
     pub has_utc_clock_capability: bool,
 }
-impl llrp_common::LLRPDecodable for GeneralDeviceCapabilities {}
+impl llrp_common::TlvDecodable for GeneralDeviceCapabilities {}
 
 pub struct ReceiveSensitivityTableEntry {
     /// The index of the entry
@@ -188,7 +188,7 @@ pub struct ReceiveSensitivityTableEntry {
     /// Possible values: 0 to 128
     pub receive_sensitivity_value: i32,
 }
-impl llrp_common::LLRPDecodable for ReceiveSensitivityTableEntry {}
+impl llrp_common::TlvDecodable for ReceiveSensitivityTableEntry {}
 
 pub struct PerAntennaReceiveSensitivityRange {
     /// Antenna id (1-indexed). Possible values: 1 to N where N is the maximum number of antennas
@@ -203,7 +203,7 @@ pub struct PerAntennaReceiveSensitivityRange {
     /// sensitivity for this antenna
     pub receive_sensitivity_index_max: u16,
 }
-impl llrp_common::LLRPDecodable for PerAntennaReceiveSensitivityRange {}
+impl llrp_common::TlvDecodable for PerAntennaReceiveSensitivityRange {}
 
 pub struct PerAntennaAirProtocolSupport {
     /// Antenna id (1-indexed). Possible values: 1 to N where N is the maximum number of antennas
@@ -213,7 +213,7 @@ pub struct PerAntennaAirProtocolSupport {
     /// List of supported protocol IDs
     pub air_protocols_supported: Vec<AirProtocol>,
 }
-impl llrp_common::LLRPDecodable for PerAntennaAirProtocolSupport {}
+impl llrp_common::TlvDecodable for PerAntennaAirProtocolSupport {}
 
 pub struct GpioCapabilities {
     /// Number of general purpose inputs supported by the device
@@ -222,16 +222,16 @@ pub struct GpioCapabilities {
     /// Number of general purpose outputs supported by the device
     pub num_gpos: u16,
 }
-impl llrp_common::LLRPDecodable for GpioCapabilities {}
+impl llrp_common::TlvDecodable for GpioCapabilities {}
 
 pub struct LLRPCapabilities;
-impl llrp_common::LLRPDecodable for LLRPCapabilities {}
+impl llrp_common::TlvDecodable for LLRPCapabilities {}
 
 pub struct RegulatoryCapabilities;
-impl llrp_common::LLRPDecodable for RegulatoryCapabilities {}
+impl llrp_common::TlvDecodable for RegulatoryCapabilities {}
 
 pub struct AirProtocolLLRPCapabilities;
-impl llrp_common::LLRPDecodable for AirProtocolLLRPCapabilities {}
+impl llrp_common::TlvDecodable for AirProtocolLLRPCapabilities {}
 
 #[llrp_parameter(id = 177)]
 pub struct RoSpec {
@@ -349,7 +349,7 @@ pub struct AccessCommand {
 #[llrp_parameter(id = 239)]
 #[derive(Debug, Eq, PartialEq)]
 pub struct AccessReportSpec {
-    pub trigger: u8
+    pub trigger: u8,
 }
 
 #[llrp_parameter(id = 240)]
@@ -399,7 +399,6 @@ pub struct TagReportData {
 
     pub custom: Vec<CustomParameter>,
 }
-
 #[derive(Debug, Eq, PartialEq)]
 pub enum EpcDataParameter {
     EpcData(EpcData),
@@ -415,30 +414,69 @@ impl EpcDataParameter {
     }
 }
 
-impl llrp_common::LLRPDecodable for EpcDataParameter {
-    fn decode(data: &[u8]) -> llrp_common::Result<(Self, &[u8])> {
+impl llrp_common::TlvDecodable for EpcDataParameter {
+    fn decode_tlv(data: &[u8]) -> llrp_common::Result<(Self, &[u8])> {
         // First try and decoded it as a tv encoded Epc-96 parameter
         if let (Some(epc), rest) = Option::<[u8; 12]>::decode_tv(data, 13)? {
             return Ok((EpcDataParameter::Epc96(epc), rest));
         }
 
         // Otherwise try and decode it as a TLV encoded EPCData parameter
-        let (data, rest) = EpcData::decode(data)?;
+        let (data, rest) = EpcData::decode_tlv(data)?;
         Ok((EpcDataParameter::EpcData(data), rest))
-    }
-
-    fn id(&self) -> u16 {
-        match self {
-            EpcDataParameter::Epc96(_) => 13,
-            EpcDataParameter::EpcData(_) => EpcData::ID,
-        }
     }
 }
 
-#[llrp_parameter(id = 241)]
 #[derive(Debug, Eq, PartialEq)]
 pub struct EpcData {
     pub epc: Vec<u8>,
+}
+
+impl llrp_common::TlvDecodable for EpcData {
+    const ID: u16 = 241;
+
+    fn decode_tlv(data: &[u8]) -> llrp_common::Result<(Self, &[u8])> {
+        let (param_data, param_len) = llrp_common::parse_tlv_header(data, Self::ID)?;
+
+        if param_data.len() < 2 {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid length").into());
+        }
+
+        let num_bits = u16::from_be_bytes([param_data[0], param_data[1]]) as usize;
+        let num_bytes = num_bits / 8;
+
+        if param_data.len() < 2 + num_bytes {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid length").into());
+        }
+
+        let epc = EpcData {
+            epc: param_data[2..][..num_bytes].into(),
+        };
+
+        Ok((epc, &data[param_len..]))
+    }
+}
+
+#[llrp_parameter(id = 242)]
+pub struct RfSurveyReport {
+    #[tv_param = 9]
+    pub ro_spec_id: Option<u16>,
+
+    #[tv_param = 14]
+    pub spec_index: Option<u16>,
+
+    pub frequency_power_level: Vec<FrequencyPowerLevel>,
+
+    pub custom: Vec<CustomParameter>,
+}
+
+#[llrp_parameter(id = 243)]
+pub struct FrequencyPowerLevel {
+    pub frequency: u32,
+    pub bandwidth: u32,
+    pub average_rssi: u8,
+    pub peak_rssi: u8,
+    pub timestamp: UTCTimestamp,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -448,24 +486,24 @@ pub enum AirProtocolTagData {
     C1G2XPCW2,
     C1G2CRC,
 }
-impl llrp_common::LLRPDecodable for AirProtocolTagData {}
+impl llrp_common::TlvDecodable for AirProtocolTagData {}
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum OpSpecResult {
     C1G2OpSpecResult,
     ClientRequestOpSpecResult,
 }
-impl llrp_common::LLRPDecodable for OpSpecResult {}
+impl llrp_common::TlvDecodable for OpSpecResult {}
 
 pub struct ClientRequestResponse;
-impl llrp_common::LLRPDecodable for ClientRequestResponse {}
+impl llrp_common::TlvDecodable for ClientRequestResponse {}
 
 pub enum AirProtocol {
     UnspecifiedAirProtocol = 0,
     EPCGlobalClass1Gen2 = 1,
     Reserved,
 }
-impl llrp_common::LLRPDecodable for AirProtocol {}
+impl llrp_common::TlvDecodable for AirProtocol {}
 
 pub enum ConfigRequestedData {
     All,
@@ -474,13 +512,13 @@ pub enum ConfigRequestedData {
     RegulatoryCapabilities,
     AirProtocolLLRPCapabilities,
 }
-impl llrp_common::LLRPDecodable for ConfigRequestedData {}
+impl llrp_common::TlvDecodable for ConfigRequestedData {}
 
 pub struct ReaderEventNotificationSpec;
-impl llrp_common::LLRPDecodable for ReaderEventNotificationSpec {}
+impl llrp_common::TlvDecodable for ReaderEventNotificationSpec {}
 
 pub struct AntennaProperties;
-impl llrp_common::LLRPDecodable for AntennaProperties {}
+impl llrp_common::TlvDecodable for AntennaProperties {}
 
 #[llrp_parameter(id = 222)]
 pub struct AntennaConfiguration {
@@ -507,16 +545,16 @@ pub struct RfTransmitter {
 pub struct RoReportSpec {}
 
 pub struct KeepAliveSpec;
-impl llrp_common::LLRPDecodable for KeepAliveSpec {}
+impl llrp_common::TlvDecodable for KeepAliveSpec {}
 
 pub struct GpoWriteData;
-impl llrp_common::LLRPDecodable for GpoWriteData {}
+impl llrp_common::TlvDecodable for GpoWriteData {}
 
 pub struct GpiPortCurrentState;
-impl llrp_common::LLRPDecodable for GpiPortCurrentState {}
+impl llrp_common::TlvDecodable for GpiPortCurrentState {}
 
 pub struct EventsAndReports;
-impl llrp_common::LLRPDecodable for EventsAndReports {}
+impl llrp_common::TlvDecodable for EventsAndReports {}
 
 #[llrp_parameter(id = 246)]
 pub struct ReaderEventNotificationData {

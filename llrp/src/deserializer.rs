@@ -2,7 +2,7 @@ use std::io;
 
 use byteorder::{BigEndian, ReadBytesExt};
 
-use llrp_common::LLRPDecodable;
+use llrp_common::LLRPMessage;
 
 use crate::messages::*;
 

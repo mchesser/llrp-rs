@@ -1,6 +1,6 @@
 use std::io::Cursor;
 
-use llrp_common::LLRPDecodable;
+use llrp_common::LLRPMessage;
 
 use crate::{deserializer, messages::*, parameters::*};
 
@@ -259,8 +259,8 @@ fn ro_access_report_simple() {
     let msg = deserializer::deserialize_message(raw.message_type, &raw.value).unwrap();
     match msg {
         Message::RoAccessReport(x) => {
-            assert!(x.inventory_access_report_data.is_empty());
-            assert!(x.rf_survey_report_data.is_empty());
+            assert!(x.inventory_access_report.is_empty());
+            assert!(x.rf_survey_report.is_empty());
         }
         x => panic!("Invalid message type: {}", x.id()),
     }
@@ -326,10 +326,10 @@ fn ro_access_report_inventory() {
     let msg = deserializer::deserialize_message(raw.message_type, &raw.value).unwrap();
     match msg {
         Message::RoAccessReport(x) => {
-            assert!(x.rf_survey_report_data.is_empty());
+            assert!(x.rf_survey_report.is_empty());
 
-            assert_eq!(x.inventory_access_report_data.len(), 1);
-            let report_data = &x.inventory_access_report_data[0];
+            assert_eq!(x.inventory_access_report.len(), 1);
+            let report_data = &x.inventory_access_report[0];
             let expected_report_data = TagReportData {
                 epc_data: EpcDataParameter::Epc96([
                     0x0b, 0x7f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x51, 0x02, 0x38,

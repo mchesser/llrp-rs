@@ -361,9 +361,9 @@ pub struct GetReport;
 /// Contains the results of the RO and Access operations
 #[llrp_message(id = 61)]
 pub struct RoAccessReport {
-    pub inventory_access_report_data: Vec<TagReportData>,
+    pub inventory_access_report: Vec<TagReportData>,
 
-    pub rf_survey_report_data: Vec<()>,
+    pub rf_survey_report: Vec<RfSurveyReport>,
 
     /// Optional custom parameters
     pub custom: Vec<CustomParameter>,
@@ -456,7 +456,7 @@ pub enum Message {
 
 impl Message {
     pub fn id(&self) -> u16 {
-        use llrp_common::LLRPDecodable;
+        use llrp_common::LLRPMessage;
 
         match self {
             Message::GetSupportedVersion(m) => m.id(),

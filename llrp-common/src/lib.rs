@@ -35,8 +35,8 @@ impl From<Error> for io::Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-pub trait LLRPDecodable: Sized {
-    const ID: u16 = 0;
+pub trait LLRPMessage: Sized {
+    const ID: u16;
 
     fn decode(data: &[u8]) -> Result<(Self, &[u8])> {
         Err(io::Error::new(io::ErrorKind::Other, "Unimplemented").into())
@@ -47,11 +47,11 @@ pub trait LLRPDecodable: Sized {
     }
 }
 
-impl LLRPDecodable for () {}
-impl LLRPDecodable for i8 {}
-impl LLRPDecodable for i16 {}
-impl LLRPDecodable for i32 {}
-impl LLRPDecodable for i64 {}
+pub trait LLRPDecodable: Sized {
+    fn decode(data: &[u8]) -> Result<(Self, &[u8])> {
+        Err(io::Error::new(io::ErrorKind::Other, "Unimplemented").into())
+    }
+}
 
 impl LLRPDecodable for bool {
     fn decode(data: &[u8]) -> Result<(Self, &[u8])> {
@@ -127,40 +127,6 @@ impl LLRPDecodable for String {
     }
 }
 
-impl<T: LLRPDecodable> LLRPDecodable for Option<T> {
-    fn decode(data: &[u8]) -> Result<(Self, &[u8])> {
-        if data.len() == 0 {
-            return Ok((None, data));
-        }
-
-        match <T as LLRPDecodable>::decode(data) {
-            Ok((field, rest)) => Ok((Some(field), rest)),
-            Err(Error::InvalidType(_)) => Ok((None, data)),
-            Err(e) => return Err(e),
-        }
-    }
-}
-
-impl<T: LLRPDecodable> LLRPDecodable for Vec<T> {
-    fn decode(data: &[u8]) -> Result<(Self, &[u8])> {
-        let mut output = vec![];
-
-        let mut rest = data;
-        while rest.len() > 0 {
-            match <T as LLRPDecodable>::decode(rest) {
-                Ok((field, new_rest)) => {
-                    output.push(field);
-                    rest = new_rest;
-                }
-                Err(Error::InvalidType(_)) => break,
-                Err(e) => return Err(e),
-            }
-        }
-
-        Ok((output, rest))
-    }
-}
-
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct BitArray {
     pub bytes: Vec<u8>,
@@ -179,15 +145,87 @@ impl LLRPDecodable for BitArray {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid length").into());
         }
 
-        let bytes = data[2..][..num_bytes].into();
-        Ok((BitArray { bytes }, &data[2 + num_bytes..]))
+        let array = BitArray {
+            bytes: data[2..][..num_bytes].into(),
+        };
+        Ok((array, &data[2 + num_bytes..]))
     }
 }
 
-impl<T: LLRPDecodable> LLRPDecodable for Box<T> {
+pub fn parse_tlv_header(data: &[u8], target_type: u16) -> Result<(&[u8], usize)> {
+    if data.len() < 2 {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid length").into());
+    }
+    eprintln!("data = {:02x?}", data);
+
+    // [6-bit resv, 10-bit message type]
+    let type_ = u16::from_be_bytes([data[0], data[1]]) & 0b11_1111_1111;
+    eprintln!("type = {}", type_);
+    if type_ != target_type {
+        return Err(Error::InvalidType(type_));
+    }
+
+    // 16-bit length
+    let len = u16::from_be_bytes([data[2], data[3]]) as usize;
+    if len > data.len() {
+        // Length was larger than the remaining data
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid length").into());
+    }
+
+    Ok((&data[4..len], len))
+}
+
+pub trait TlvDecodable: Sized {
+    const ID: u16 = 0;
+    fn decode_tlv(_data: &[u8]) -> Result<(Self, &[u8])> {
+        unimplemented!()
+    }
+}
+
+impl<T: TlvDecodable> LLRPDecodable for T {
     fn decode(data: &[u8]) -> Result<(Self, &[u8])> {
-        let (result, rest) = <T as LLRPDecodable>::decode(data)?;
+        <T as TlvDecodable>::decode_tlv(data)
+    }
+}
+
+impl<T: TlvDecodable> TlvDecodable for Option<T> {
+    fn decode_tlv(data: &[u8]) -> Result<(Self, &[u8])> {
+        if data.len() == 0 {
+            return Ok((None, data));
+        }
+
+        match <T as TlvDecodable>::decode_tlv(data) {
+            Ok((field, rest)) => Ok((Some(field), rest)),
+            Err(Error::InvalidType(_)) => Ok((None, data)),
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+impl<T: TlvDecodable> TlvDecodable for Box<T> {
+    fn decode_tlv(data: &[u8]) -> Result<(Self, &[u8])> {
+        let (result, rest) = <T as TlvDecodable>::decode_tlv(data)?;
         Ok((Box::new(result), rest))
+    }
+}
+
+impl<T: TlvDecodable> TlvDecodable for Vec<T> {
+    fn decode_tlv(data: &[u8]) -> Result<(Self, &[u8])> {
+        let mut output = vec![];
+
+        let mut rest = data;
+        while rest.len() > 0 {
+            match <T as TlvDecodable>::decode_tlv(rest) {
+                Ok((field, new_rest)) => {
+                    output.push(field);
+                    rest = new_rest;
+                }
+                Err(Error::InvalidType(_)) => break,
+                Err(e) => return Err(e),
+            }
+        }
+
+        Ok((output, rest))
     }
 }
 

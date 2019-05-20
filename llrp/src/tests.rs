@@ -1,6 +1,6 @@
 use std::io::Cursor;
 
-use pretty_assertions::{assert_eq, assert_ne};
+use pretty_assertions::assert_eq;
 
 use crate::{deserializer, messages::*, parameters::*, BitArray, LLRPMessage};
 
@@ -141,60 +141,62 @@ fn add_ro_spec() {
     let msg = deserializer::deserialize_message(raw.message_type, &raw.value).unwrap();
     match msg {
         Message::AddRoSpec(x) => {
-            let spec = x.ro_spec;
-            assert_eq!(spec.id, 1);
-            assert_eq!(spec.priority, 0);
-            assert_eq!(spec.current_state, 0);
+            let expected_spec = RoSpec {
+                id: 1,
+                priority: 0,
+                current_state: 0,
+                boundary_spec: RoBoundarySpec {
+                    start_trigger: RoSpecStartTrigger {
+                        trigger_type: 1,
+                        periodic_trigger_value: None,
+                        gpi_trigger_value: None,
+                    },
+                    stop_trigger: RoSpecStopTrigger {
+                        trigger_type: 1,
+                        duration_trigger_value: 3000,
+                        gpi_trigger_value: None,
+                    },
+                },
+                spec_list: vec![AiSpec {
+                    antenna_ids: vec![1],
+                    stop_trigger: AiSpecStopTrigger {
+                        trigger_type: 0,
+                        duration_trigger_value: 0,
+                        gpi_trigger_value: None,
+                        tag_observation_trigger_value: None,
+                    },
+                    inventory_specs: vec![InventorySpec {
+                        spec_id: 1234,
+                        protocol_id: 1,
+                        antenna_configuration: vec![AntennaConfiguration {
+                            antenna_id: 1,
+                            rf_receiver: None,
+                            rf_transmitter: None,
+                            inventory_commands: vec![C1G2InventoryCommand {
+                                tag_inventory_state_aware: 0,
+                                filter: vec![],
+                                rf_control: Some(C1G2RfControl {
+                                    mode_index: 0,
+                                    tari: 0,
+                                }),
+                                singulation_control: Some(C1G2SingulationControl {
+                                    session: 1 << 6,
+                                    tag_population: 1,
+                                    tag_transit_time: 0,
+                                    tag_inventory_state_aware_action: None,
+                                }),
+                                custom: vec![],
+                            }],
+                            custom: vec![],
+                        }],
+                        custom: vec![],
+                    }],
+                    custom: vec![],
+                }],
+                report_spec: None,
+            };
 
-            let start_trigger = spec.boundary_spec.start_trigger;
-            assert_eq!(start_trigger.trigger_type, 1);
-            assert!(start_trigger.periodic_trigger_value.is_none());
-            assert!(start_trigger.gpi_trigger_value.is_none());
-
-            let stop_trigger = spec.boundary_spec.stop_trigger;
-            assert_eq!(stop_trigger.trigger_type, 1);
-            assert_eq!(stop_trigger.duration_trigger_value, 3000);
-            assert!(stop_trigger.gpi_trigger_value.is_none());
-
-            assert_eq!(spec.spec_list.len(), 1);
-            let ai_spec = &spec.spec_list[0];
-
-            assert_eq!(ai_spec.antenna_ids, vec![1]);
-
-            let ai_stop_trigger = &ai_spec.stop_trigger;
-            assert_eq!(ai_stop_trigger.trigger_type, 0);
-            assert_eq!(ai_stop_trigger.duration_trigger_value, 0);
-            assert!(ai_stop_trigger.gpi_trigger_value.is_none());
-            assert!(ai_stop_trigger.tag_observation_trigger_value.is_none());
-
-            assert_eq!(ai_spec.inventory_specs.len(), 1);
-            let inventory_spec = &ai_spec.inventory_specs[0];
-
-            assert_eq!(inventory_spec.spec_id, 1234);
-            assert_eq!(inventory_spec.protocol_id, 1);
-
-            assert_eq!(inventory_spec.antenna_configuration.len(), 1);
-            let antenna_cfg = &inventory_spec.antenna_configuration[0];
-
-            assert_eq!(antenna_cfg.antenna_id, 1);
-            assert!(antenna_cfg.rf_receiver.is_none());
-            assert!(antenna_cfg.rf_transmitter.is_none());
-
-            assert_eq!(antenna_cfg.inventory_commands.len(), 1);
-            let inventory_cmd = &antenna_cfg.inventory_commands[0];
-
-            assert_eq!(inventory_cmd.tag_inventory_state_aware, 0);
-            assert_eq!(inventory_cmd.filter.len(), 0);
-
-            let rf_control = inventory_cmd.rf_control.as_ref().unwrap();
-            assert_eq!(rf_control.mode_index, 0);
-            assert_eq!(rf_control.tari, 0);
-
-            let singulation_control = inventory_cmd.singulation_control.as_ref().unwrap();
-            assert_eq!(singulation_control.session, 0b0100_0000);
-            assert_eq!(singulation_control.tag_population, 1);
-            assert_eq!(singulation_control.tag_transit_time, 0);
-            assert!(singulation_control.tag_inventory_state_aware_action.is_none());
+            assert_eq!(x.ro_spec, expected_spec);
         }
         x => panic!("Invalid message type: {}", x.id()),
     }

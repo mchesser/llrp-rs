@@ -106,6 +106,7 @@ impl llrp_common::LLRPDecodable for StatusCode {
 }
 
 #[llrp_parameter(id = 287)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct LLRPStatus {
     pub status_code: StatusCode,
     pub error_description: String,
@@ -114,12 +115,14 @@ pub struct LLRPStatus {
 }
 
 #[llrp_parameter(id = 288)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct FieldError {
     pub field_number: u16,
     pub error_code: StatusCode,
 }
 
 #[llrp_parameter(id = 289)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct ParameterError {
     pub field_error: Option<FieldError>,
     pub parameter_error: Option<Box<ParameterError>>,
@@ -127,12 +130,14 @@ pub struct ParameterError {
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct CustomParameter;
+
 impl llrp_common::TlvDecodable for CustomParameter {
     fn decode_tlv(_data: &[u8]) -> llrp_common::Result<(Self, &[u8])> {
         Err(llrp_common::Error::InvalidType(0))
     }
 }
 
+#[derive(Debug, Eq, PartialEq)]
 pub enum ReaderCapabilitiesRequestedData {
     All,
     GeneralDeviceCapabilities,
@@ -142,6 +147,7 @@ pub enum ReaderCapabilitiesRequestedData {
 }
 impl llrp_common::TlvDecodable for ReaderCapabilitiesRequestedData {}
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct GeneralDeviceCapabilities {
     /// The IANA Private Enterprise Number (PEN)
     pub device_manufacturer_name: u32,
@@ -180,6 +186,7 @@ pub struct GeneralDeviceCapabilities {
 }
 impl llrp_common::TlvDecodable for GeneralDeviceCapabilities {}
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct ReceiveSensitivityTableEntry {
     /// The index of the entry
     pub index: u16,
@@ -190,6 +197,7 @@ pub struct ReceiveSensitivityTableEntry {
 }
 impl llrp_common::TlvDecodable for ReceiveSensitivityTableEntry {}
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct PerAntennaReceiveSensitivityRange {
     /// Antenna id (1-indexed). Possible values: 1 to N where N is the maximum number of antennas
     /// supported by the device
@@ -205,6 +213,7 @@ pub struct PerAntennaReceiveSensitivityRange {
 }
 impl llrp_common::TlvDecodable for PerAntennaReceiveSensitivityRange {}
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct PerAntennaAirProtocolSupport {
     /// Antenna id (1-indexed). Possible values: 1 to N where N is the maximum number of antennas
     /// supported by the device
@@ -215,6 +224,7 @@ pub struct PerAntennaAirProtocolSupport {
 }
 impl llrp_common::TlvDecodable for PerAntennaAirProtocolSupport {}
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct GpioCapabilities {
     /// Number of general purpose inputs supported by the device
     pub num_gpis: u16,
@@ -224,16 +234,20 @@ pub struct GpioCapabilities {
 }
 impl llrp_common::TlvDecodable for GpioCapabilities {}
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct LLRPCapabilities;
 impl llrp_common::TlvDecodable for LLRPCapabilities {}
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct RegulatoryCapabilities;
 impl llrp_common::TlvDecodable for RegulatoryCapabilities {}
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct AirProtocolLLRPCapabilities;
 impl llrp_common::TlvDecodable for AirProtocolLLRPCapabilities {}
 
 #[llrp_parameter(id = 177)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct RoSpec {
     pub id: u32,
     pub priority: u8,
@@ -244,23 +258,22 @@ pub struct RoSpec {
 }
 
 #[llrp_parameter(id = 178)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct RoBoundarySpec {
     pub start_trigger: RoSpecStartTrigger,
     pub stop_trigger: RoSpecStopTrigger,
 }
 
 #[llrp_parameter(id = 179)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct RoSpecStartTrigger {
     pub trigger_type: u8,
-
-    // FIXME: required when trigger_type == 2
     pub periodic_trigger_value: Option<PeriodicTriggerValue>,
-
-    // FIXME: required when trigger_type == 3
     pub gpi_trigger_value: Option<GPITriggerValue>,
 }
 
 #[llrp_parameter(id = 180)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct PeriodicTriggerValue {
     pub offset: u64,
     pub period: u64,
@@ -268,6 +281,7 @@ pub struct PeriodicTriggerValue {
 }
 
 #[llrp_parameter(id = 181)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct GPITriggerValue {
     pub gpi_port_num: u16,
     pub gpi_event: bool,
@@ -275,6 +289,7 @@ pub struct GPITriggerValue {
 }
 
 #[llrp_parameter(id = 182)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct RoSpecStopTrigger {
     pub trigger_type: u8,
     pub duration_trigger_value: u32,
@@ -282,16 +297,17 @@ pub struct RoSpecStopTrigger {
 }
 
 #[llrp_parameter(id = 183)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct AiSpec {
     #[has_length]
     pub antenna_ids: Vec<u16>,
-
     pub stop_trigger: AiSpecStopTrigger,
     pub inventory_specs: Vec<InventorySpec>,
     pub custom: Vec<CustomParameter>,
 }
 
 #[llrp_parameter(id = 184)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct AiSpecStopTrigger {
     pub trigger_type: u8,
     pub duration_trigger_value: u32,
@@ -300,6 +316,7 @@ pub struct AiSpecStopTrigger {
 }
 
 #[llrp_parameter(id = 185)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct TagObservationTriggerValue {
     pub trigger_type: u8,
     pub _reserved: u8,
@@ -310,6 +327,7 @@ pub struct TagObservationTriggerValue {
 }
 
 #[llrp_parameter(id = 186)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct InventorySpec {
     pub spec_id: u16,
     pub protocol_id: u8,
@@ -458,6 +476,7 @@ impl llrp_common::TlvDecodable for EpcData {
 }
 
 #[llrp_parameter(id = 242)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct RfSurveyReport {
     #[tv_param = 9]
     pub ro_spec_id: Option<u16>,
@@ -471,6 +490,7 @@ pub struct RfSurveyReport {
 }
 
 #[llrp_parameter(id = 243)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct FrequencyPowerLevel {
     pub frequency: u32,
     pub bandwidth: u32,
@@ -588,9 +608,11 @@ pub struct C1G2GetBlockPermalockStatusOpSpecResult {
     pub permalock_status: Vec<u16>,
 }
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct ClientRequestResponse;
 impl llrp_common::TlvDecodable for ClientRequestResponse {}
 
+#[derive(Debug, Eq, PartialEq)]
 pub enum AirProtocol {
     UnspecifiedAirProtocol = 0,
     EPCGlobalClass1Gen2 = 1,
@@ -598,6 +620,7 @@ pub enum AirProtocol {
 }
 impl llrp_common::TlvDecodable for AirProtocol {}
 
+#[derive(Debug, Eq, PartialEq)]
 pub enum ConfigRequestedData {
     All,
     GeneralDeviceCapabilities,
@@ -607,13 +630,16 @@ pub enum ConfigRequestedData {
 }
 impl llrp_common::TlvDecodable for ConfigRequestedData {}
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct ReaderEventNotificationSpec;
 impl llrp_common::TlvDecodable for ReaderEventNotificationSpec {}
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct AntennaProperties;
 impl llrp_common::TlvDecodable for AntennaProperties {}
 
 #[llrp_parameter(id = 222)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct AntennaConfiguration {
     pub antenna_id: u16,
     pub rf_receiver: Option<RfReceiver>,
@@ -623,11 +649,13 @@ pub struct AntennaConfiguration {
 }
 
 #[llrp_parameter(id = 223)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct RfReceiver {
     pub receiver_sensitivity: u16,
 }
 
 #[llrp_parameter(id = 224)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct RfTransmitter {
     pub hop_table_id: u16,
     pub channel_index: u16,
@@ -635,37 +663,46 @@ pub struct RfTransmitter {
 }
 
 #[llrp_parameter(id = 237)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct RoReportSpec {}
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct KeepAliveSpec;
 impl llrp_common::TlvDecodable for KeepAliveSpec {}
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct GpoWriteData;
 impl llrp_common::TlvDecodable for GpoWriteData {}
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct GpiPortCurrentState;
 impl llrp_common::TlvDecodable for GpiPortCurrentState {}
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct EventsAndReports;
 impl llrp_common::TlvDecodable for EventsAndReports {}
 
 #[llrp_parameter(id = 246)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct ReaderEventNotificationData {
     pub timestamp: UTCTimestamp,
     pub connection_attempt: Option<ConnectionEventAttempt>,
 }
 
 #[llrp_parameter(id = 128)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct UTCTimestamp {
     pub microseconds: u64,
 }
 
 #[llrp_parameter(id = 256)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct ConnectionEventAttempt {
     pub status: StatusCode,
 }
 
 #[llrp_parameter(id = 330)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct C1G2InventoryCommand {
     pub tag_inventory_state_aware: u8,
     pub filter: Vec<C1G2Filter>,
@@ -675,15 +712,18 @@ pub struct C1G2InventoryCommand {
 }
 
 #[llrp_parameter(id = 331)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct C1G2Filter {}
 
 #[llrp_parameter(id = 335)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct C1G2RfControl {
     pub mode_index: u16,
     pub tari: u16,
 }
 
 #[llrp_parameter(id = 336)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct C1G2SingulationControl {
     // FIXME: session is stored in the first two high-bits, this should be made into an enum
     pub session: u8,
@@ -693,6 +733,7 @@ pub struct C1G2SingulationControl {
 }
 
 #[llrp_parameter(id = 337)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct TagInventoryStateAwareSingulationAction {}
 
 #[llrp_parameter(id = 338)]

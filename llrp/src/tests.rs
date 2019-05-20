@@ -1,8 +1,8 @@
 use std::io::Cursor;
 
-use llrp_common::LLRPMessage;
+use pretty_assertions::{assert_eq, assert_ne};
 
-use crate::{deserializer, messages::*, parameters::*};
+use crate::{deserializer, messages::*, parameters::*, BitArray, LLRPMessage};
 
 #[test]
 fn reader_event_notifications_conn_attempt() {
@@ -345,9 +345,182 @@ fn ro_access_report_inventory() {
                 last_seen_timestamp_utc: None,
                 last_seen_timestamp_uptime: None,
                 tag_seen_count: None,
-                air_protocol_tag_data: vec![],
+                air_protocol_tag_data: C1G2AirProtocolTagData::default(),
                 access_spec_id: None,
                 op_spec_result: vec![],
+                custom: vec![],
+            };
+            assert_eq!(report_data, &expected_report_data);
+        }
+        x => panic!("Invalid message type: {}", x.id()),
+    }
+}
+
+#[test]
+fn add_access_spec_read() {
+    let bytes: &[u8] = &[
+        0x04, 0x28, 0x00, 0x00, 0x00, 0x4a, 0x00, 0x00, 0x06, 0x8f, 0x00, 0xcf, 0x00, 0x40, 0x00,
+        0x00, 0x01, 0xaf, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0xd0, 0x00, 0x07,
+        0x00, 0x00, 0x01, 0x00, 0xd1, 0x00, 0x24, 0x01, 0x52, 0x00, 0x11, 0x01, 0x53, 0x00, 0x0d,
+        0x60, 0x00, 0x20, 0x00, 0x08, 0xff, 0x00, 0x08, 0x0b, 0x01, 0x55, 0x00, 0x0f, 0x00, 0x6f,
+        0x00, 0x00, 0x00, 0x00, 0xc0, 0x00, 0x00, 0x00, 0x10, 0x00, 0xef, 0x00, 0x05, 0x00,
+    ];
+    let raw = deserializer::deserialize_raw(Cursor::new(bytes)).unwrap();
+
+    assert_eq!(raw.ver, 1);
+    assert_eq!(raw.message_type, AddAccessSpec::ID);
+    assert_eq!(raw.id, 1679);
+    assert_eq!(raw.value.len(), 64);
+
+    let msg = deserializer::deserialize_message(raw.message_type, &raw.value).unwrap();
+    match msg {
+        Message::AddAccessSpec(x) => {
+            let spec = x.access_spec;
+            let expected = AccessSpec {
+                id: 431,
+                antenna_id: 1,
+                protocol_id: 1,
+                current_state: false,
+                ro_spec_id: 1,
+                stop_trigger: AccessSpecStopTrigger {
+                    trigger_type: 0,
+                    operation_count: 1,
+                },
+                command: AccessCommand {
+                    tag_spec: C1G2TagSpec {
+                        tag_pattern1: C1G2TargetTag {
+                            memory_bank_and_match: 0x60,
+                            pointer: 0x0020,
+                            tag_mask: BitArray::from_bytes(vec![0xff]),
+                            tag_data: BitArray::from_bytes(vec![0x0b]),
+                        },
+                        tag_pattern2: None,
+                    },
+                    op_spec: vec![C1G2Read {
+                        op_spec_id: 111,
+                        access_password: 0,
+                        memory_bank: 3 << 6,
+                        word_ptr: 0x0000,
+                        word_count: 16,
+                    }
+                    .into()],
+                    custom: vec![],
+                },
+                report_spec: Some(AccessReportSpec {
+                    trigger: 0,
+                }),
+                custom: vec![],
+            };
+
+            assert_eq!(spec, expected);
+        }
+        x => panic!("Invalid message type: {}", x.id()),
+    }
+}
+
+#[test]
+fn ro_access_report_read_zero() {
+    let bytes: &[u8] = &[
+        0x04, 0x3d, 0x00, 0x00, 0x00, 0x32, 0x3a, 0xfb, 0x37, 0x05, 0x00, 0xf0, 0x00, 0x28, 0x8d,
+        0x0b, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x51, 0x02, 0x38, 0x81, 0x00, 0x01,
+        0x86, 0xbc, 0x82, 0x00, 0x05, 0x88, 0x80, 0x19, 0x83, 0x92, 0xa9, 0x01, 0x5d, 0x00, 0x09,
+        0x02, 0x00, 0x6f, 0x00, 0x00,
+    ];
+    let raw = deserializer::deserialize_raw(Cursor::new(bytes)).unwrap();
+
+    assert_eq!(raw.ver, 1);
+    assert_eq!(raw.message_type, RoAccessReport::ID);
+    assert_eq!(raw.id, 989542149);
+    assert_eq!(raw.value.len(), 40);
+
+    let msg = deserializer::deserialize_message(raw.message_type, &raw.value).unwrap();
+    match msg {
+        Message::RoAccessReport(x) => {
+            assert!(x.rf_survey_report.is_empty());
+
+            assert_eq!(x.inventory_access_report.len(), 1);
+            let report_data = &x.inventory_access_report[0];
+            let expected_report_data = TagReportData {
+                epc_data: EpcDataParameter::Epc96([
+                    0x0b, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x51, 0x02, 0x38,
+                ]),
+                ro_spec_id: None,
+                spec_index: None,
+                inventory_param_spec_id: None,
+                antenna_id: Some(1),
+                peak_rssi: Some(188),
+                channel_index: None,
+                first_seen_timestamp_utc: Some(1557458648797865),
+                first_seen_timestamp_uptime: None,
+                last_seen_timestamp_utc: None,
+                last_seen_timestamp_uptime: None,
+                tag_seen_count: None,
+                air_protocol_tag_data: C1G2AirProtocolTagData::default(),
+                access_spec_id: None,
+                op_spec_result: vec![C1G2ReadOpSpecResult {
+                    result: 2,
+                    op_spec_id: 111,
+                    read_data: vec![],
+                }
+                .into()],
+                custom: vec![],
+            };
+            assert_eq!(report_data, &expected_report_data);
+        }
+        x => panic!("Invalid message type: {}", x.id()),
+    }
+}
+
+#[test]
+fn ro_access_report_read() {
+    let bytes: &[u8] = &[
+        0x04, 0x3d, 0x00, 0x00, 0x00, 0x52, 0x3a, 0xfb, 0x37, 0x06, 0x00, 0xf0, 0x00, 0x48, 0x8d,
+        0x0b, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x51, 0x02, 0x38, 0x81, 0x00, 0x01,
+        0x86, 0xbc, 0x82, 0x00, 0x05, 0x88, 0x80, 0x19, 0x83, 0xab, 0x7e, 0x01, 0x5d, 0x00, 0x29,
+        0x00, 0x00, 0x6f, 0x00, 0x10, 0x9d, 0x22, 0x03, 0x8a, 0x4b, 0x44, 0xa2, 0xe4, 0xd3, 0xa6,
+        0x62, 0x34, 0x84, 0xae, 0x99, 0x9c, 0x21, 0x48, 0x71, 0x58, 0x6d, 0x7e, 0xc4, 0xfc, 0xc3,
+        0x2a, 0x29, 0x87, 0xfa, 0x6b, 0x52, 0xab,
+    ];
+    let raw = deserializer::deserialize_raw(Cursor::new(bytes)).unwrap();
+
+    assert_eq!(raw.ver, 1);
+    assert_eq!(raw.message_type, RoAccessReport::ID);
+    assert_eq!(raw.id, 989542150);
+    assert_eq!(raw.value.len(), 72);
+
+    let msg = deserializer::deserialize_message(raw.message_type, &raw.value).unwrap();
+    match msg {
+        Message::RoAccessReport(x) => {
+            assert!(x.rf_survey_report.is_empty());
+
+            assert_eq!(x.inventory_access_report.len(), 1);
+            let report_data = &x.inventory_access_report[0];
+            let expected_report_data = TagReportData {
+                epc_data: EpcDataParameter::Epc96([
+                    0x0b, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x51, 0x02, 0x38,
+                ]),
+                ro_spec_id: None,
+                spec_index: None,
+                inventory_param_spec_id: None,
+                antenna_id: Some(1),
+                peak_rssi: Some(188),
+                channel_index: None,
+                first_seen_timestamp_utc: Some(1557458648804222),
+                first_seen_timestamp_uptime: None,
+                last_seen_timestamp_utc: None,
+                last_seen_timestamp_uptime: None,
+                tag_seen_count: None,
+                air_protocol_tag_data: C1G2AirProtocolTagData::default(),
+                access_spec_id: None,
+                op_spec_result: vec![C1G2ReadOpSpecResult {
+                    result: 0,
+                    op_spec_id: 111,
+                    read_data: vec![
+                        0x9d22, 0x038a, 0x4b44, 0xa2e4, 0xd3a6, 0x6234, 0x84ae, 0x999c, 0x2148,
+                        0x7158, 0x6d7e, 0xc4fc, 0xc32a, 0x2987, 0xfa6b, 0x52ab,
+                    ],
+                }
+                .into()],
                 custom: vec![],
             };
             assert_eq!(report_data, &expected_report_data);
@@ -392,12 +565,8 @@ fn add_access_spec_blockwrite() {
                         tag_pattern1: C1G2TargetTag {
                             memory_bank_and_match: 0x60,
                             pointer: 0x0020,
-                            tag_mask: llrp_common::BitArray {
-                                bytes: vec![0xFF],
-                            },
-                            tag_data: llrp_common::BitArray {
-                                bytes: vec![0x0b],
-                            },
+                            tag_mask: BitArray::from_bytes(vec![0xff]),
+                            tag_data: BitArray::from_bytes(vec![0x0b]),
                         },
                         tag_pattern2: None,
                     },
@@ -407,7 +576,8 @@ fn add_access_spec_blockwrite() {
                         memory_bank: 0,
                         word_ptr: 0x0003,
                         write_data: vec![0x0021],
-                    }],
+                    }
+                    .into()],
                     custom: vec![],
                 },
                 report_spec: Some(AccessReportSpec {
@@ -416,10 +586,60 @@ fn add_access_spec_blockwrite() {
                 custom: vec![],
             };
 
-            eprintln!("{:#?}", spec);
-            eprintln!("{:#?}", expected);
-
             assert_eq!(spec, expected);
+        }
+        x => panic!("Invalid message type: {}", x.id()),
+    }
+}
+
+#[test]
+fn ro_access_report_blockwrite() {
+    let bytes: &[u8] = &[
+        0x04, 0x3d, 0x00, 0x00, 0x00, 0x32, 0x3a, 0xfb, 0x36, 0xed, 0x00, 0xf0, 0x00, 0x28, 0x8d,
+        0x0b, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x51, 0x02, 0x38, 0x81, 0x00, 0x01,
+        0x86, 0xbc, 0x82, 0x00, 0x05, 0x88, 0x80, 0x19, 0x7f, 0xbd, 0xdd, 0x01, 0x62, 0x00, 0x09,
+        0x00, 0x00, 0x6f, 0x00, 0x01,
+    ];
+    let raw = deserializer::deserialize_raw(Cursor::new(bytes)).unwrap();
+
+    assert_eq!(raw.ver, 1);
+    assert_eq!(raw.message_type, RoAccessReport::ID);
+    assert_eq!(raw.id, 989542125);
+    assert_eq!(raw.value.len(), 40);
+
+    let msg = deserializer::deserialize_message(raw.message_type, &raw.value).unwrap();
+    match msg {
+        Message::RoAccessReport(x) => {
+            assert!(x.rf_survey_report.is_empty());
+
+            assert_eq!(x.inventory_access_report.len(), 1);
+            let report_data = &x.inventory_access_report[0];
+            let expected_report_data = TagReportData {
+                epc_data: EpcDataParameter::Epc96([
+                    0x0b, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x51, 0x02, 0x38,
+                ]),
+                ro_spec_id: None,
+                spec_index: None,
+                inventory_param_spec_id: None,
+                antenna_id: Some(1),
+                peak_rssi: Some(188),
+                channel_index: None,
+                first_seen_timestamp_utc: Some(1557458648546781),
+                first_seen_timestamp_uptime: None,
+                last_seen_timestamp_utc: None,
+                last_seen_timestamp_uptime: None,
+                tag_seen_count: None,
+                air_protocol_tag_data: C1G2AirProtocolTagData::default(),
+                access_spec_id: None,
+                op_spec_result: vec![C1G2BlockWriteOpSpecResult {
+                    result: 0,
+                    op_spec_id: 111,
+                    words_written: 1,
+                }
+                .into()],
+                custom: vec![],
+            };
+            assert_eq!(report_data, &expected_report_data);
         }
         x => panic!("Invalid message type: {}", x.id()),
     }

@@ -132,6 +132,14 @@ pub struct BitArray {
     pub bytes: Vec<u8>,
 }
 
+impl BitArray {
+    pub fn from_bytes(bytes: impl Into<Vec<u8>>) -> BitArray {
+        BitArray {
+            bytes: bytes.into(),
+        }
+    }
+}
+
 impl LLRPDecodable for BitArray {
     fn decode(data: &[u8]) -> Result<(Self, &[u8])> {
         if data.len() < 2 {

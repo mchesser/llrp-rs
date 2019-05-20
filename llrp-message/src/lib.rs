@@ -273,47 +273,59 @@ pub fn derive_llrp_enum(input: proc_macro::TokenStream) -> proc_macro::TokenStre
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
 
-    let possible_matches = match input.data {
-        Data::Enum(ref inner) => inner.variants.iter().map(|v| {
-            let ty = match &v.fields {
-                Fields::Unnamed(ref fields) => {
-                    if fields.unnamed.len() != 1 {
-                        panic!("Invalid varient");
-                    }
-                    fields.unnamed.iter().next().unwrap()
-                }
-                _ => panic!("Invalid varient"),
-            };
+    let mut possible_matches = vec![];
+    let mut from_impls = vec![];
 
-            let name = &v.ident;
-            quote!({
-                __type if __type == #ty::ID => {
-                    let (result, rest) = <#ty as crate::LLRPDecodable>::decode(data)?;
-                    Ok((#name(result), rest))
-                }
-            })
-        }),
+    match input.data {
+        Data::Enum(ref inner) => {
+            for v in inner.variants.iter() {
+                let ty = match &v.fields {
+                    Fields::Unnamed(ref fields) => {
+                        if fields.unnamed.len() != 1 {
+                            panic!("Invalid varient");
+                        }
+                        fields.unnamed.iter().next().unwrap()
+                    }
+                    _ => panic!("Invalid varient"),
+                };
+
+                let var_name = &v.ident;
+                possible_matches.push(quote! {
+                    __type if __type == #ty::ID => {
+                        let (result, rest) = <#ty as crate::LLRPDecodable>::decode(data)?;
+                        Ok((#name::#var_name(result), rest))
+                    }
+                });
+
+                from_impls.push(quote! {
+                    impl From<#ty> for #name {
+                        fn from(value: #ty) -> Self {
+                            #name::#var_name(value)
+                        }
+                    }
+                });
+            }
+        }
         _ => panic!("Only supported for enums"),
     };
 
     let expanded = quote! {
-        #input
-
-        impl crate::LLRPDecodable for #name {
-            fn decode(data: &[u8]) -> crate::Result<(Self, &[u8])> {
+        impl crate::TlvDecodable for #name {
+            fn decode_tlv(data: &[u8]) -> crate::Result<(Self, &[u8])> {
                 if data.len() < 2 {
                     return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid length").into());
                 }
 
                 // [6-bit resv, 10-bit message type]
                 let __type = u16::from_be_bytes([data[0], data[1]]) & 0b11_1111_1111;
-                match value {
-                     #(#possible_matches,)*
-                     _ => return Err(crate::Error::InvalidType(__type))
-                };
-
+                match __type {
+                    #(#possible_matches,)*
+                    _ => return Err(crate::Error::InvalidType(__type))
+                }
             }
         }
+
+        #(#from_impls)*
     };
 
     proc_macro::TokenStream::from(expanded)

@@ -1,5 +1,5 @@
 use llrp_common::{BitArray, TvDecodable};
-use llrp_message::{llrp_parameter, TryFromU16};
+use llrp_message::{llrp_parameter, LLRPEnum, TryFromU16};
 
 use std::{convert::TryFrom, convert::TryInto, io};
 
@@ -342,7 +342,7 @@ pub struct AccessSpecStopTrigger {
 #[derive(Debug, Eq, PartialEq)]
 pub struct AccessCommand {
     pub tag_spec: C1G2TagSpec,
-    pub op_spec: Vec<C1G2BlockWrite>,
+    pub op_spec: Vec<OpSpec>,
     pub custom: Vec<CustomParameter>,
 }
 
@@ -390,7 +390,7 @@ pub struct TagReportData {
     #[tv_param = 8]
     pub tag_seen_count: Option<u16>,
 
-    pub air_protocol_tag_data: Vec<AirProtocolTagData>,
+    pub air_protocol_tag_data: C1G2AirProtocolTagData,
 
     #[tv_param = 16]
     pub access_spec_id: Option<u32>,
@@ -479,21 +479,114 @@ pub struct FrequencyPowerLevel {
     pub timestamp: UTCTimestamp,
 }
 
-#[derive(Debug, Eq, PartialEq)]
-pub enum AirProtocolTagData {
-    C1G2PC,
-    C1G2XPCW1,
-    C1G2XPCW2,
-    C1G2CRC,
+#[derive(Default, Debug, Eq, PartialEq)]
+pub struct C1G2AirProtocolTagData {
+    pub pc_bits: Option<u16>,
+    pub xpc_w2: Option<u16>,
+    pub xpc_w1: Option<u16>,
+    pub crc: Option<u16>,
 }
-impl llrp_common::TlvDecodable for AirProtocolTagData {}
 
-#[derive(Debug, Eq, PartialEq)]
-pub enum OpSpecResult {
-    C1G2OpSpecResult,
-    ClientRequestOpSpecResult,
+impl crate::LLRPDecodable for C1G2AirProtocolTagData {
+    fn decode(data: &[u8]) -> crate::Result<(Self, &[u8])> {
+        let (pc_bits, data) = TvDecodable::decode_tv(data, 12)?;
+        let (xpc_w1, data) = TvDecodable::decode_tv(data, 19)?;
+        let (xpc_w2, data) = TvDecodable::decode_tv(data, 20)?;
+        let (crc, data) = TvDecodable::decode_tv(data, 11)?;
+
+        let result = C1G2AirProtocolTagData {
+            pc_bits,
+            xpc_w1,
+            xpc_w2,
+            crc,
+        };
+
+        Ok((result, data))
+    }
 }
-impl llrp_common::TlvDecodable for OpSpecResult {}
+
+#[derive(Debug, Eq, PartialEq, LLRPEnum)]
+pub enum OpSpecResult {
+    C1G2Read(C1G2ReadOpSpecResult),
+    C1G2Write(C1G2WriteOpSpecResult),
+    C1G2Kill(C1G2KillOpSpecResult),
+    C1G2Recommission(C1G2RecommissionOpSpecResult),
+    C1G2Lock(C1G2LockOpSpecResult),
+    C1G2BlockErase(C1G2BlockEraseOpSpecResult),
+    C1G2BlockWrite(C1G2BlockWriteOpSpecResult),
+    C1G2BlockPermalock(C1G2BlockPermalockOpSpecResult),
+    C1G2GetBlockPermalockStatus(C1G2GetBlockPermalockStatusOpSpecResult),
+    // ClientRequestOpSpecResult,
+}
+
+#[llrp_parameter(id = 349)]
+#[derive(Debug, Eq, PartialEq)]
+pub struct C1G2ReadOpSpecResult {
+    pub result: u8,
+    pub op_spec_id: u16,
+    #[has_length]
+    pub read_data: Vec<u16>,
+}
+
+#[llrp_parameter(id = 350)]
+#[derive(Debug, Eq, PartialEq)]
+pub struct C1G2WriteOpSpecResult {
+    pub result: u8,
+    pub op_spec_id: u16,
+    pub words_written: u16,
+}
+
+#[llrp_parameter(id = 351)]
+#[derive(Debug, Eq, PartialEq)]
+pub struct C1G2KillOpSpecResult {
+    pub result: u8,
+    pub op_spec_id: u16,
+}
+
+#[llrp_parameter(id = 360)]
+#[derive(Debug, Eq, PartialEq)]
+pub struct C1G2RecommissionOpSpecResult {
+    pub result: u8,
+    pub op_spec_id: u16,
+}
+
+#[llrp_parameter(id = 352)]
+#[derive(Debug, Eq, PartialEq)]
+pub struct C1G2LockOpSpecResult {
+    pub result: u8,
+    pub op_spec_id: u16,
+}
+
+#[llrp_parameter(id = 353)]
+#[derive(Debug, Eq, PartialEq)]
+pub struct C1G2BlockEraseOpSpecResult {
+    pub result: u8,
+    pub op_spec_id: u16,
+}
+
+#[llrp_parameter(id = 354)]
+#[derive(Debug, Eq, PartialEq)]
+pub struct C1G2BlockWriteOpSpecResult {
+    pub result: u8,
+    pub op_spec_id: u16,
+    pub words_written: u16,
+}
+
+#[llrp_parameter(id = 361)]
+#[derive(Debug, Eq, PartialEq)]
+pub struct C1G2BlockPermalockOpSpecResult {
+    pub result: u8,
+    pub op_spec_id: u16,
+}
+
+#[llrp_parameter(id = 362)]
+#[derive(Debug, Eq, PartialEq)]
+pub struct C1G2GetBlockPermalockStatusOpSpecResult {
+    pub result: u8,
+    pub op_spec_id: u16,
+    #[has_length]
+    pub permalock_status: Vec<u16>,
+}
 
 pub struct ClientRequestResponse;
 impl llrp_common::TlvDecodable for ClientRequestResponse {}
@@ -618,6 +711,80 @@ pub struct C1G2TargetTag {
     pub tag_data: BitArray,
 }
 
+#[derive(Debug, Eq, PartialEq, LLRPEnum)]
+pub enum OpSpec {
+    C1G2Read(C1G2Read),
+    C1G2Write(C1G2Write),
+    C1G2Kill(C1G2Kill),
+    C1G2Recommission(C1G2Recommission),
+    C1G2Lock(C1G2Lock),
+    C1G2BlockErase(C1G2BlockErase),
+    C1G2BlockWrite(C1G2BlockWrite),
+    C1G2BlockPermalock(C1G2BlockPermalock),
+    C1G2GetBlockPermalockStatus(C1G2GetBlockPermalockStatus),
+}
+
+#[llrp_parameter(id = 341)]
+#[derive(Debug, Eq, PartialEq)]
+pub struct C1G2Read {
+    pub op_spec_id: u16,
+    pub access_password: u32,
+    pub memory_bank: u8,
+    pub word_ptr: u16,
+    pub word_count: u16,
+}
+
+#[llrp_parameter(id = 342)]
+#[derive(Debug, Eq, PartialEq)]
+pub struct C1G2Write {
+    pub op_spec_id: u16,
+    pub access_password: u32,
+    pub memory_bank: u8,
+    pub word_ptr: u16,
+    #[has_length]
+    pub write_data: Vec<u16>,
+}
+
+#[llrp_parameter(id = 343)]
+#[derive(Debug, Eq, PartialEq)]
+pub struct C1G2Kill {
+    pub op_spec_id: u16,
+    pub kill_password: u16,
+}
+
+#[llrp_parameter(id = 357)]
+#[derive(Debug, Eq, PartialEq)]
+pub struct C1G2Recommission {
+    pub op_spec_id: u16,
+    pub kill_password: u16,
+    pub params: u8,
+}
+
+#[llrp_parameter(id = 344)]
+#[derive(Debug, Eq, PartialEq)]
+pub struct C1G2Lock {
+    pub op_spec_id: u16,
+    pub access_password: u32,
+    pub lock_parms: Vec<C1G2LockPayload>,
+}
+
+#[llrp_parameter(id = 345)]
+#[derive(Debug, Eq, PartialEq)]
+pub struct C1G2LockPayload {
+    pub privilaged: u8,
+    pub data_field: u8,
+}
+
+#[llrp_parameter(id = 346)]
+#[derive(Debug, Eq, PartialEq)]
+pub struct C1G2BlockErase {
+    pub op_spec_id: u16,
+    pub access_password: u32,
+    pub memory_bank: u8,
+    pub word_ptr: u16,
+    pub word_count: u16,
+}
+
 #[llrp_parameter(id = 347)]
 #[derive(Debug, Eq, PartialEq)]
 pub struct C1G2BlockWrite {
@@ -625,7 +792,27 @@ pub struct C1G2BlockWrite {
     pub access_password: u32,
     pub memory_bank: u8,
     pub word_ptr: u16,
-
     #[has_length]
     pub write_data: Vec<u16>,
+}
+
+#[llrp_parameter(id = 358)]
+#[derive(Debug, Eq, PartialEq)]
+pub struct C1G2BlockPermalock {
+    pub op_spec_id: u16,
+    pub access_password: u32,
+    pub memory_bank: u8,
+    pub block_ptr: u16,
+    #[has_length]
+    pub block_mask: Vec<u16>,
+}
+
+#[llrp_parameter(id = 359)]
+#[derive(Debug, Eq, PartialEq)]
+pub struct C1G2GetBlockPermalockStatus {
+    pub op_spec_id: u16,
+    pub access_password: u32,
+    pub memory_bank: u8,
+    pub block_ptr: u16,
+    pub block_range: u16,
 }

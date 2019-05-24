@@ -58,7 +58,7 @@ fn decode_struct_named_fields(name: &Ident, fields: &mut FieldsNamed) -> syn::Re
 
         decoding.push(quote! {
             eprintln!("decoding: {}", stringify!(#field_name));
-            let (#field_name, #remaining_data) = #decoded;
+            #decoded
         });
 
         field_assignments.push(quote!(#field_name))
@@ -80,47 +80,87 @@ fn decode_struct_named_fields(name: &Ident, fields: &mut FieldsNamed) -> syn::Re
     }))
 }
 
+/// Parses a literal value from an attribute
+fn parse_meta_lit(attr: syn::Meta) -> syn::Result<syn::Lit> {
+    match attr {
+        syn::Meta::Word(_) | syn::Meta::List(_) => {
+            Err(syn::Error::new(attr.span(), "expected literal"))
+        }
+        syn::Meta::NameValue(value) => Ok(value.lit),
+    }
+}
+
+/// Parses a word from an attribute
+fn parse_meta_word(attr: syn::Meta) -> syn::Result<syn::Ident> {
+    match attr {
+        syn::Meta::NameValue(_) | syn::Meta::List(_) => {
+            return Err(syn::Error::new(attr.span(), "Unexpected value"));
+        }
+        syn::Meta::Word(ident) => Ok(ident),
+    }
+}
+
+/// Parses a meta-list from an attribute
+fn parse_meta_list(attr: syn::Meta) -> syn::Result<syn::MetaList> {
+    match attr {
+        syn::Meta::NameValue(_) | syn::Meta::Word(_) => {
+            return Err(syn::Error::new(attr.span(), "Unexpected value"));
+        }
+        syn::Meta::List(list) => Ok(list),
+    }
+}
+
 enum FieldAttribute {
     TvParam(syn::Lit),
     HasLength,
+    PackedStart(syn::Ident),
+    Packed,
     None,
 }
 
 impl FieldAttribute {
     fn parse(field: &mut Field) -> syn::Result<FieldAttribute> {
-        // Parses a literal value from an attribute
-        fn parse_attr_lit(attr: &syn::Attribute) -> syn::Result<syn::Lit> {
-            match attr.parse_meta()? {
-                syn::Meta::Word(_) | syn::Meta::List(_) => {
-                    Err(syn::Error::new(attr.span(), "expected literal"))
-                }
-                syn::Meta::NameValue(value) => Ok(value.lit),
-            }
-        }
-
         for (i, attr) in field.attrs.iter().enumerate() {
-            let segment = attr.path.segments.iter().next();
-            match segment {
+            let field_attr = match attr.path.segments.iter().next() {
                 Some(x) if x.ident == "tv_param" => {
-                    let lit = parse_attr_lit(attr)?;
-                    drop(segment);
-
-                    field.attrs.remove(i);
-                    return Ok(FieldAttribute::TvParam(lit));
+                    let lit = parse_meta_lit(attr.parse_meta()?)?;
+                    FieldAttribute::TvParam(lit)
                 }
-                Some(x) if x.ident == "has_length" => match attr.parse_meta()? {
-                    syn::Meta::NameValue(_) | syn::Meta::List(_) => {
+
+                Some(x) if x.ident == "has_length" => {
+                    let _ = parse_meta_word(attr.parse_meta()?)?;
+                    FieldAttribute::HasLength
+                }
+
+                Some(x) if x.ident == "packed" => match attr.parse_meta()? {
+                    syn::Meta::NameValue(_) => {
                         return Err(syn::Error::new(attr.span(), "Unexpected value"));
                     }
-                    syn::Meta::Word(_) => {
-                        drop(segment);
-                        field.attrs.remove(i);
-                        return Ok(FieldAttribute::HasLength);
+
+                    // Matches `#[packet]`
+                    syn::Meta::Word(_) => FieldAttribute::Packed,
+
+                    // Matches items like `#[packed(u16)]` -- indicating the start of a new packed
+                    // byte or word
+                    syn::Meta::List(list) => {
+                        let mut list_iter = list.nested.into_iter();
+
+                        let ty = match list_iter.next().unwrap() {
+                            syn::NestedMeta::Literal(_) => {
+                                return Err(syn::Error::new(attr.span(), "Unexpected value"));
+                            }
+                            syn::NestedMeta::Meta(meta) => parse_meta_word(meta)?,
+                        };
+
+                        FieldAttribute::PackedStart(ty)
                     }
                 },
 
-                Some(_) | None => {}
-            }
+                Some(_) | None => continue,
+            };
+
+            field.attrs.remove(i);
+            return Ok(field_attr);
         }
 
         Ok(FieldAttribute::None)
@@ -133,30 +173,59 @@ fn decode_field(data: &Ident, field: &mut Field) -> syn::Result<TokenStream> {
 
     // Generate code for decoding the field
     let ty = &field.ty;
+    let name = &field.ident;
     match attr {
         FieldAttribute::TvParam(tv_id) => {
-            Ok(quote!(<#ty as crate::TvDecodable>::decode_tv(#data, #tv_id)?))
+            Ok(quote! {
+                let (#name, #data) = <#ty as crate::TvDecodable>::decode_tv(#data, #tv_id)?;
+            })
         }
 
-        FieldAttribute::HasLength => Ok(quote!({
-            if #data.len() < 2 {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid length").into());
-            }
+        FieldAttribute::HasLength => Ok(quote! {
+            let (#name, #data) = {
+                if #data.len() < 2 {
+                    return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid length").into());
+                }
 
-            let len = u16::from_be_bytes([#data[0], #data[1]]) as usize;
-            let mut output = <#ty>::with_capacity(len);
-            let mut rest = &#data[2..];
+                let len = u16::from_be_bytes([#data[0], #data[1]]) as usize;
+                let mut output = <#ty>::with_capacity(len);
+                let mut rest = &#data[2..];
 
-            for _ in 0..len {
-                let result = crate::LLRPDecodable::decode(rest)?;
-                output.push(result.0);
-                rest = result.1;
-            }
+                for _ in 0..len {
+                    let result = crate::LLRPDecodable::decode(rest)?;
+                    output.push(result.0);
+                    rest = result.1;
+                }
 
-            (output, rest)
-        })),
+                (output, rest)
+            };
+        }),
 
-        FieldAttribute::None => Ok(quote!(<#ty as crate::LLRPDecodable>::decode(#data)?)),
+        FieldAttribute::PackedStart(outer_ty) => Ok(quote! {
+            let (__value, #data) = <#outer_ty as crate::LLRPDecodable>::decode(#data)?;
+            let mut __bitoffset = 0;
+
+            let __num_bits = <#ty as crate::LLRPPackedDecodable>::NUM_BITS;
+            let __size = core::mem::size_of_val(&__value) * 8;
+            __bitoffset += __num_bits;
+            let __byte = ((__value >> __size as u8 - __bitoffset) as u8) & __num_bits;
+
+            let #name = <#ty as crate::LLRPPackedDecodable>::decode_packed(__byte)?;
+        }),
+
+        FieldAttribute::Packed => Ok(quote! {
+            let __num_bits = <#ty as crate::LLRPPackedDecodable>::NUM_BITS;
+            let __size = core::mem::size_of_val(&__value) * 8;
+            __bitoffset += __num_bits;
+            let __byte = ((__value >> __size as u8 - __bitoffset) as u8) & __num_bits;
+
+            let #name = <#ty as crate::LLRPPackedDecodable>::decode_packed(__byte)?;
+        }),
+        FieldAttribute::None => {
+            Ok(quote! {
+                let (#name, #data) = <#ty as crate::LLRPDecodable>::decode(#data)?;
+            })
+        }
     }
 }
 

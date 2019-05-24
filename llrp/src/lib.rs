@@ -6,6 +6,6 @@ pub mod parameters;
 mod tests;
 
 pub use llrp_common::{
-    parse_tlv_header, BitArray, Error, LLRPDecodable, LLRPMessage, Result, TlvDecodable,
-    TvDecodable,
+    parse_tlv_header, BitArray, Error, LLRPDecodable, LLRPMessage, LLRPPackedDecodable, Result,
+    TlvDecodable, TvDecodable,
 };

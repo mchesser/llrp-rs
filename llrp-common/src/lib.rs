@@ -3,6 +3,7 @@ use std::{convert::TryInto, fmt, io};
 #[derive(Debug)]
 pub enum Error {
     IoError(io::Error),
+    InvalidData,
     InvalidType(u16),
 }
 
@@ -10,6 +11,7 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Error::IoError(e) => write!(f, "{}", e),
+            Error::InvalidData => write!(f, "Invalid data"),
             Error::InvalidType(type_id) => write!(f, "Invalid type id: {}", type_id),
         }
     }
@@ -26,6 +28,9 @@ impl From<Error> for io::Error {
     fn from(err: Error) -> Self {
         match err {
             Error::IoError(e) => e,
+            Error::InvalidData => {
+                io::Error::new(io::ErrorKind::InvalidInput, format!("Invalid data"))
+            }
             Error::InvalidType(type_id) => {
                 io::Error::new(io::ErrorKind::InvalidInput, format!("Invalid type id: {}", type_id))
             }
@@ -157,6 +162,19 @@ impl LLRPDecodable for BitArray {
             bytes: data[2..][..num_bytes].into(),
         };
         Ok((array, &data[2 + num_bytes..]))
+    }
+}
+
+pub trait LLRPPackedDecodable: Sized {
+    const NUM_BITS: u8;
+    fn decode_packed(value: u8) -> Result<Self>;
+}
+
+impl LLRPPackedDecodable for bool {
+    const NUM_BITS: u8 = 1;
+
+    fn decode_packed(value: u8) -> Result<Self> {
+        Ok((value & 1) == 1)
     }
 }
 

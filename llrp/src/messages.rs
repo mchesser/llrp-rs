@@ -47,14 +47,14 @@ pub struct GetReaderCapabilities {
     pub requested_data: ReaderCapabilitiesRequestedData,
 
     /// Optional custom parameters
-    pub custom: Option<Vec<CustomParameter>>,
+    pub custom: Vec<CustomParameter>,
 }
 
 /// Response to the `GET_READER_CAPABILITIES` message
 #[llrp_message(id = 11)]
 pub struct GetReaderCapabilitiesResponse {
     /// Reader status
-    pub status: Option<LLRPStatus>,
+    pub status: LLRPStatus,
 
     /// Reader general device capabilities
     pub general: Option<GeneralDeviceCapabilities>,
@@ -66,10 +66,10 @@ pub struct GetReaderCapabilitiesResponse {
     pub regulatory: Option<RegulatoryCapabilities>,
 
     /// Reader Air protocol LLRP capabilities
-    pub air_protocol: Option<AirProtocolLLRPCapabilities>,
+    pub air_protocol: Option<C1G2LLRPCapabilities>,
 
     /// Optional custom parameters
-    pub custom: Option<Vec<CustomParameter>>,
+    pub custom: Vec<CustomParameter>,
 }
 
 //

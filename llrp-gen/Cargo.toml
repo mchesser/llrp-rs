@@ -1,0 +1,13 @@
+[package]
+name = "llrp-gen"
+version = "0.1.0"
+authors = ["Michael Chesser <michael.chesser@adelaide.edu.au>"]
+edition = "2018"
+
+[dependencies]
+heck = "0.3.1"
+quote = "0.6.13"
+serde = { version = "1.0.98", features = ["derive"] }
+serde-xml-rs = "0.3.1"
+syn = { version = "0.15.42", default-features = false }
+proc-macro2 = "0.4.30"

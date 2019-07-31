@@ -3,4 +3,5 @@ members = [
     "llrp",
     "llrp-common",
     "llrp-message",
+    "llrp-gen",
 ]

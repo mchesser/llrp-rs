@@ -40,6 +40,34 @@ impl From<Error> for io::Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// Divides one slice into two at an index, returning an error if the index is greater than the
+/// length of the slice.
+pub fn split_at_checked(data: &[u8], mid: usize) -> Result<(&[u8], &[u8])> {
+    if data.len() < mid {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid length").into());
+    }
+    Ok(data.split_at(mid))
+}
+
+/// Divides one slice into two, where the length of the first slice is given by a be_u16 encoded
+/// length, returning an error array is not long enough
+pub fn split_with_u16_length(data: &[u8]) -> Result<(&[u8], &[u8])> {
+    let (len, data) = split_at_checked(data, 2)
+        .map(|(data, rest)| (u16::from_be_bytes(data.try_into().unwrap()), rest))?;
+    split_at_checked(data, len as usize)
+}
+
+/// Ensures that all bytes were consumed when parsing the struct fields
+/// TODO: consider adding a feature to run in `relaxed` mode where this error is ignored
+pub fn validate_consumed(data: &[u8]) -> Result<()> {
+    if data.is_empty() {
+        return Err(
+            io::Error::new(io::ErrorKind::InvalidData, "Parameter had trailing bytes").into()
+        );
+    }
+    Ok(())
+}
+
 pub trait LLRPMessage: Sized {
     const ID: u16;
 
@@ -60,10 +88,8 @@ pub trait LLRPDecodable: Sized {
 
 impl LLRPDecodable for bool {
     fn decode(data: &[u8]) -> Result<(Self, &[u8])> {
-        if data.len() < 1 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid length").into());
-        }
-        Ok((data[0] != 0, &data[1..]))
+        let (data, rest) = split_at_checked(data, 1)?;
+        Ok((data[0] != 0, rest))
     }
 }
 
@@ -71,16 +97,11 @@ macro_rules! impl_llrp_decodable_primitive {
     ($ty: ty) => {
         impl LLRPDecodable for $ty {
             fn decode(data: &[u8]) -> Result<(Self, &[u8])> {
-                let ty_len = std::mem::size_of::<$ty>();
-                if data.len() < ty_len {
-                    return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid length").into());
-                }
-
-                let value = <$ty>::from_be_bytes(data[..ty_len].try_into().unwrap());
-                Ok((value, &data[ty_len..]))
+                split_at_checked(data, std::mem::size_of::<$ty>())
+                    .map(|(data, rest)| (Self::from_be_bytes(data.try_into().unwrap()), rest))
             }
         }
-    }
+    };
 }
 impl_llrp_decodable_primitive!(i8);
 impl_llrp_decodable_primitive!(u8);
@@ -91,27 +112,19 @@ impl_llrp_decodable_primitive!(u64);
 
 impl LLRPDecodable for [u8; 12] {
     fn decode(data: &[u8]) -> Result<(Self, &[u8])> {
-        if data.len() < 12 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid length").into());
-        }
-        Ok((data[..12].try_into().unwrap(), &data[12..]))
+        split_at_checked(data, 12).map(|(data, rest)| (data.try_into().unwrap(), rest))
     }
 }
 
 impl LLRPDecodable for String {
     fn decode(data: &[u8]) -> Result<(Self, &[u8])> {
-        if data.len() < 2 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid length").into());
-        }
-        let length = u16::from_be_bytes([data[0], data[1]]) as usize;
-        if data.len() < 2 + length {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid length").into());
-        }
+        let (data, rest) = split_with_u16_length(data)?;
 
-        let string = String::from_utf8(data[2..][..length].into())
+        let string = String::from_utf8(data.into())
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+
         eprintln!("{}", string);
-        Ok((string, &data[2 + length..]))
+        Ok((string, rest))
     }
 }
 
@@ -122,29 +135,18 @@ pub struct BitArray {
 
 impl BitArray {
     pub fn from_bytes(bytes: impl Into<Vec<u8>>) -> BitArray {
-        BitArray {
-            bytes: bytes.into(),
-        }
+        BitArray { bytes: bytes.into() }
     }
 }
 
 impl LLRPDecodable for BitArray {
     fn decode(data: &[u8]) -> Result<(Self, &[u8])> {
-        if data.len() < 2 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid length").into());
-        }
+        let (num_bits, data) = split_at_checked(data, 2)
+            .map(|(data, rest)| (u16::from_be_bytes(data.try_into().unwrap()) as usize, rest))?;
 
-        let num_bits = u16::from_be_bytes([data[0], data[1]]) as usize;
-        let num_bytes = num_bits / 8;
+        let (data, rest) = split_at_checked(data, num_bits / 8)?;
 
-        if data.len() < 2 + num_bytes {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid length").into());
-        }
-
-        let array = BitArray {
-            bytes: data[2..][..num_bytes].into(),
-        };
-        Ok((array, &data[2 + num_bytes..]))
+        Ok((BitArray { bytes: data.into() }, rest))
     }
 }
 
@@ -161,27 +163,17 @@ impl LLRPPackedDecodable for bool {
     }
 }
 
-pub fn parse_tlv_header(data: &[u8], target_type: u16) -> Result<(&[u8], usize)> {
-    if data.len() < 2 {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid length").into());
-    }
-    eprintln!("data = {:02x?}", data);
+pub fn parse_tlv_header(data: &[u8], target_type: u16) -> Result<(&[u8], &[u8])> {
+    // The first two bytes consist of [6-bit resv, 10-bit message type]
+    let (type_bytes, data) = split_at_checked(data, 2)?;
+    let type_ = u16::from_be_bytes([type_bytes[0], type_bytes[1]]) & 0b11_1111_1111;
 
-    // [6-bit resv, 10-bit message type]
-    let type_ = u16::from_be_bytes([data[0], data[1]]) & 0b11_1111_1111;
     eprintln!("type = {}", type_);
     if type_ != target_type {
         return Err(Error::InvalidType(type_));
     }
 
-    // 16-bit length
-    let len = u16::from_be_bytes([data[2], data[3]]) as usize;
-    if len > data.len() {
-        // Length was larger than the remaining data
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid length").into());
-    }
-
-    Ok((&data[4..len], len))
+    split_with_u16_length(data)
 }
 
 pub trait TlvDecodable: Sized {
@@ -257,7 +249,6 @@ impl<T: LLRPDecodable> TvDecodable for Option<T> {
         Ok((Some(data), rest))
     }
 }
-
 
 pub type u1 = u8;
 pub type u2 = u8;

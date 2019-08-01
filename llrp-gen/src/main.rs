@@ -183,24 +183,16 @@ impl ParameterDefinition {
                 const ID: u16 = #type_num;
 
                 fn decode_tlv(data: &[u8]) -> crate::Result<(Self, &[u8])> {
-                    let (param_data, param_len) = crate::parse_tlv_header(data, #type_num)?;
+                    let (param_data, rest) = crate::parse_tlv_header(data, #type_num)?;
 
                     let #data = param_data;
                     #(#decode_fields)*
                     let __result = #name {
                         #(#field_names,)*
                     };
+                    crate::validate_consumed(#data)?;
 
-                    // Ensure that all bytes were consumed when parsing the struct fields
-                    if #data.len() != 0 {
-                        return Err(std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            "Did not use consume all bytes in the parameter when inner parameters",
-                        )
-                        .into());
-                    }
-
-                    Ok((__result, &data[param_len..]))
+                    Ok((__result, rest))
                 }
             }
         }
@@ -252,16 +244,17 @@ impl EnumerationDefinition {
 
             impl crate::LLRPDecodable for #name {
                 fn decode(data: &[u8]) -> crate::Result<(Self, &[u8])> {
-                    if data.len() < #type_len {
-                        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid length").into());
-                    }
-
-                    let value = match <#type_>::from_be_bytes(data[..#type_len].try_into().unwrap()) {
+                    let (data, rest) = crate::split_at_checked(data, #type_len)?;
+                    let value = match <#type_>::from_be_bytes(data.try_into().unwrap()) {
                         #(#matches,)*
-                        other => return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, format!("Invalid variant: {}", other)).into())
+                        other => return Err(
+                            std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                format!("Invalid variant: {}", other)
+                            ).into()
+                        )
                     };
-
-                    Ok((value, &data[#type_len..]))
+                    Ok((value, rest))
                 }
             }
         }
@@ -393,7 +386,7 @@ impl Item {
                 }
 
                 match format.as_ref() {
-                    _=> quote!(pub #name: #type_),
+                    _ => quote!(pub #name: #type_),
                 }
             }
 
@@ -424,7 +417,7 @@ impl Item {
                 let type_ = type_with_repeat(&type_, repeat);
 
                 quote! {
-                    let (#name, #data) = <#type_ as crate::LLRPDecodable>::decode(#data)?;
+                    let (#name, #data) = crate::LLRPDecodable::decode(#data)?;
                 }
             }
 
@@ -433,7 +426,7 @@ impl Item {
                 let type_ = type_with_repeat(&type_, repeat);
 
                 quote! {
-                    let (#name, #data) = <#type_ as crate::LLRPDecodable>::decode(#data)?;
+                    let (#name, #data) = crate::LLRPDecodable::decode(#data)?;
                 }
             }
 
@@ -441,21 +434,21 @@ impl Item {
                 let name = field_name(&name);
                 let type_ = type_name(&type_);
 
-                if let Some(enumeration) = &enumeration {
-                    let enum_ident = enum_name(&enumeration);
+                // if let Some(enumeration) = &enumeration {
+                //     let enum_ident = enum_name(&enumeration);
 
-                    return quote! {
-                        let (#name, #data) = <#enum_ident as crate::LLRPDecodable>::decode(#data)?;
-                    };
-                }
+                //     return quote! {
+                //         let (#name, #data) = crate::LLRPDecodable::decode(#data)?;
+                //     };
+                // }
 
                 match format.as_ref().map(String::as_str) {
                     // Some("Hex") => {
                     //     quote! {
                     //         let (#name, #data) = {
                     //             if #data.len() < 2 {
-                    //                 return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid length").into());
-                    //             }
+                    //                 return Err(io::Error::new(io::ErrorKind::InvalidData,
+                    // "Invalid length").into());             }
 
                     //             let len = u16::from_be_bytes([#data[0], #data[1]]) as usize;
                     //             let mut output = <#type_>::with_capacity(len);
@@ -473,7 +466,7 @@ impl Item {
                     // }
                     _ => {
                         quote! {
-                            let (#name, #data) = <#type_ as crate::LLRPDecodable>::decode(#data)?;
+                            let (#name, #data) = crate::LLRPDecodable::decode(#data)?;
                         }
                     }
                 }
@@ -482,7 +475,7 @@ impl Item {
             Item::Reserved { bit_count } => {
                 let type_ = Ident::new(&format!("u{}", bit_count), Span::call_site());
                 quote! {
-                    let (__reserved, #data) = <#type_ as crate::LLRPDecodable>::decode(#data)?;
+                    let (__reserved, #data) = crate::LLRPDecodable::decode(#data)?;
                 }
             }
         }
@@ -522,14 +515,10 @@ fn main() {
     let mut enums_out = file_writer("enumerations.rs");
     let mut choices_out = file_writer("choices.rs");
 
-    writeln!(
-        messages_out,
-        "use std::io;\nuse crate::{{common::*, parameters::*, enumerations::*, choices::*}};"
-    )
-    .unwrap();
-    writeln!(params_out, "use std::io;\nuse crate::{{common::*, enumerations::*, choices::*}};")
+    writeln!(messages_out, "use crate::{{common::*, parameters::*, enumerations::*, choices::*}};")
         .unwrap();
-    writeln!(enums_out, "use std::{{io, convert::TryInto}};").unwrap();
+    writeln!(params_out, "use crate::{{common::*, enumerations::*, choices::*}};").unwrap();
+    writeln!(enums_out, "use std::convert::TryInto;").unwrap();
 
     for item in def.definitions {
         let item: Definition = item;

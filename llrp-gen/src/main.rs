@@ -11,39 +11,55 @@ fn message_name(name: &str) -> Ident {
     Ident::new(&name.to_camel_case(), Span::call_site())
 }
 
-fn type_name_str(name: &str) -> String {
-    match name {
-        "u1" => "bool".to_owned(),
-        "u1v" => "BitArray".to_owned(),
-        "u8" => "u8".to_owned(),
-        "u8v" => "Vec<u8>".to_owned(),
-        "u16" => "u16".to_owned(),
-        "u16v" => "Vec<u16>".to_owned(),
-        "u32" => "u32".to_owned(),
-        "u32v" => "Vec<u32>".to_owned(),
-        "u64" => "u64".to_owned(),
-        "u64v" => "Vec<u64>".to_owned(),
-        "s8" => "i8".to_owned(),
-        "s16" => "i16".to_owned(),
-        "s32" => "i32".to_owned(),
-        "s64" => "i64".to_owned(),
-        "utf8v" => "String".to_owned(),
-        "bytesToEnd" => "Vec<u8>".to_owned(),
-        other => other.to_owned(),
-    }
+fn type_name(type_name: &str) -> TokenStream {
+    let mapped_name = match type_name {
+        "u1" => "bool",
+        "u8" => "u8",
+        "u16" => "u16",
+        "u32" => "u32",
+        "u64" => "u64",
+        "s8" => "i8",
+        "s16" => "i16",
+        "s32" => "i32",
+        "s64" => "i64",
+        "u1v" => "BitArray",
+        "u8v" => "Vec<u8>",
+        "u16v" => "Vec<u16>",
+        "u32v" => "Vec<u32>",
+        "u64v" => "Vec<u64>",
+        "utf8v" => "String",
+        "bytesToEnd" => "Vec<u8>",
+        other => other,
+    };
+    syn::parse_str(mapped_name).unwrap()
 }
 
-fn type_name(name: &str) -> TokenStream {
-    syn::parse_str(&type_name_str(&name)).unwrap()
+fn field_encoding(type_name: &str) -> Encoding {
+    match type_name {
+        "u8v" => Encoding::ArrayWithLength,
+        "u16v" => Encoding::ArrayWithLength,
+        "u32v" => Encoding::ArrayWithLength,
+        "u64v" => Encoding::ArrayWithLength,
+        "bytesToEnd" => Encoding::ArrayWithLength,
+        _ => Encoding::TlvParameter,
+    }
 }
 
 fn type_with_repeat(name: &str, repeat: &Repeat) -> TokenStream {
     let base_type = type_name(name);
-    match repeat {
-        Repeat::One => quote!(#base_type),
-        Repeat::ZeroOrOne => quote!(Option<#base_type>),
-        Repeat::ZeroToN => quote!(Vec<#base_type>),
-        Repeat::OneToN => quote!(Vec<#base_type>),
+
+    let is_recursive = match name {
+        "ParameterError" => true,
+        _ => false,
+    };
+
+    match (repeat, is_recursive) {
+        (Repeat::One, false) => quote!(#base_type),
+        (Repeat::One, true) => quote!(Box<#base_type>),
+        (Repeat::ZeroOrOne, false) => quote!(Option<#base_type>),
+        (Repeat::ZeroOrOne, true) => quote!(Option<Box<#base_type>>),
+        (Repeat::ZeroToN, _) => quote!(Vec<#base_type>),
+        (Repeat::OneToN, _) => quote!(Vec<#base_type>),
     }
 }
 
@@ -115,11 +131,12 @@ impl MessageDefinition {
         let name = message_name(&self.name);
         let type_num = self.type_num;
 
-        let field_defs = gen_field_defs(&self.items);
+        let fields = parse_items(&self.items, true);
 
         let data = Ident::new("__rest", Span::call_site());
-        let decode_fields = valid_fields(&self.items).map(Item::field_decode);
-        let field_names = valid_fields(&self.items).map(Item::field_name);
+        let field_defs = fields.iter().map(|field| field.field_def());
+        let decode_fields = fields.iter().map(|field| field.field_decode(&data));
+        let field_names = fields.iter().map(|field| &field.ident);
 
         quote! {
             #[derive(Debug, Eq, PartialEq)]
@@ -167,11 +184,13 @@ impl ParameterDefinition {
     fn gen_code(&self) -> TokenStream {
         let name = type_name(&self.name);
         let type_num = self.type_num;
-        let field_defs = gen_field_defs(&self.items);
+
+        let fields = parse_items(&self.items, false);
 
         let data = Ident::new("__rest", Span::call_site());
-        let decode_fields = valid_fields(&self.items).map(Item::field_decode);
-        let field_names = valid_fields(&self.items).map(Item::field_name);
+        let field_defs = fields.iter().map(|field| field.field_def());
+        let decode_fields = fields.iter().map(|field| field.field_decode(&data));
+        let field_names = fields.iter().map(|field| &field.ident);
 
         quote! {
             #[derive(Debug, Eq, PartialEq)]
@@ -364,133 +383,122 @@ enum Item {
     },
 }
 
-impl Item {
-    fn field_def(&self) -> TokenStream {
-        match self {
-            Item::Annotation(_) => panic!("Annotations should be stripped"),
+fn parse_items(items: &[Item], is_message: bool) -> Vec<MessageOrParameterField> {
+    let mut output = vec![];
 
-            Item::Choice { repeat, type_ } | Item::Parameter { repeat, type_ } => {
-                let name = field_name(&type_);
-                let type_ = type_with_repeat(&type_, repeat);
+    for item in items {
+        let field = match item {
+            Item::Annotation(_) => continue,
 
-                quote!(pub #name: #type_)
-            }
+            Item::Choice { repeat, type_ } => MessageOrParameterField {
+                encoding: Encoding::TlvParameter,
+                ident: field_name(&type_),
+                source_type: type_.clone(),
+                type_: type_with_repeat(&type_, repeat),
+            },
 
-            Item::Field { type_, name, format, enumeration } => {
-                let name = field_name(&name);
-                let type_ = type_name(&type_);
-
-                if let Some(enumeration) = &enumeration {
-                    let enum_ident = enum_name(&enumeration);
-                    return quote!(pub #name: #enum_ident);
-                }
-
-                match format.as_ref() {
-                    _ => quote!(pub #name: #type_),
-                }
-            }
-
-            Item::Reserved { bit_count } => {
-                let type_ = Ident::new(&format!("u{}", bit_count), Span::call_site());
-                quote!(pub __reserved: #type_)
-            }
-        }
-    }
-
-    fn field_name(&self) -> Ident {
-        match self {
-            Item::Annotation(_) => panic!("Annotations should be stripped"),
-            Item::Choice { type_, .. } | Item::Parameter { type_, .. } => field_name(&type_),
-            Item::Field { name, .. } => field_name(&name),
-            Item::Reserved { .. } => Ident::new("__reserved", Span::call_site()),
-        }
-    }
-
-    fn field_decode(&self) -> TokenStream {
-        let data = Ident::new("__rest", Span::call_site());
-
-        match self {
-            Item::Annotation(_) => panic!("Annotations should be stripped"),
-
-            Item::Choice { type_, repeat } => {
-                let name = field_name(&type_);
-                let type_ = type_with_repeat(&type_, repeat);
-
-                quote! {
-                    let (#name, #data) = crate::LLRPDecodable::decode(#data)?;
-                }
-            }
-
-            Item::Parameter { type_, repeat } => {
-                let name = field_name(&type_);
-                let type_ = type_with_repeat(&type_, repeat);
-
-                quote! {
-                    let (#name, #data) = crate::LLRPDecodable::decode(#data)?;
-                }
-            }
+            Item::Parameter { repeat, type_ } => MessageOrParameterField {
+                encoding: Encoding::TlvParameter,
+                ident: field_name(&type_),
+                source_type: type_.clone(),
+                type_: type_with_repeat(&type_, repeat),
+            },
 
             Item::Field { type_, name, format, enumeration } => {
-                let name = field_name(&name);
-                let type_ = type_name(&type_);
+                let ident = field_name(&name);
 
-                // if let Some(enumeration) = &enumeration {
-                //     let enum_ident = enum_name(&enumeration);
-
-                //     return quote! {
-                //         let (#name, #data) = crate::LLRPDecodable::decode(#data)?;
-                //     };
-                // }
-
-                match format.as_ref().map(String::as_str) {
-                    // Some("Hex") => {
-                    //     quote! {
-                    //         let (#name, #data) = {
-                    //             if #data.len() < 2 {
-                    //                 return Err(io::Error::new(io::ErrorKind::InvalidData,
-                    // "Invalid length").into());             }
-
-                    //             let len = u16::from_be_bytes([#data[0], #data[1]]) as usize;
-                    //             let mut output = <#type_>::with_capacity(len);
-                    //             let mut rest = &#data[2..];
-
-                    //             for _ in 0..len {
-                    //                 let result = crate::LLRPDecodable::decode(rest)?;
-                    //                 output.push(result.0);
-                    //                 rest = result.1;
-                    //             }
-
-                    //             (output, rest)
-                    //         };
-                    //     }
-                    // }
-                    _ => {
-                        quote! {
-                            let (#name, #data) = crate::LLRPDecodable::decode(#data)?;
+                match enumeration.as_ref() {
+                    Some(enumeration) => {
+                        let enum_ident = enum_name(&enumeration);
+                        MessageOrParameterField {
+                            encoding: Encoding::TlvParameter,
+                            ident,
+                            source_type: enumeration.clone(),
+                            type_: quote!(#enum_ident),
                         }
                     }
+                    None => MessageOrParameterField {
+                        encoding: field_encoding(&type_),
+                        ident,
+                        source_type: type_.clone(),
+                        type_: type_name(&type_),
+                    },
                 }
             }
 
             Item::Reserved { bit_count } => {
-                let type_ = Ident::new(&format!("u{}", bit_count), Span::call_site());
-                quote! {
-                    let (__reserved, #data) = crate::LLRPDecodable::decode(#data)?;
+                let source_type = format!("u{}", bit_count);
+                let type_ = Ident::new(&source_type, Span::call_site());
+
+                MessageOrParameterField {
+                    encoding: Encoding::TlvParameter,
+                    ident: Ident::new("__reserved", Span::call_site()).into(),
+                    source_type,
+                    type_: quote!(#type_),
                 }
             }
+        };
+
+        output.push(field);
+    }
+
+    output
+}
+
+#[derive(Copy, Clone)]
+enum Encoding {
+    TlvParameter,
+    TvParameter,
+    ArrayWithLength,
+}
+
+struct MessageOrParameterField {
+    encoding: Encoding,
+    ident: Ident,
+    source_type: String,
+    type_: TokenStream,
+}
+
+impl MessageOrParameterField {
+    fn field_def(&self) -> TokenStream {
+        let ident = &self.ident;
+        let ty = &self.type_;
+        quote!(pub #ident: #ty)
+    }
+
+    fn field_decode(&self, data: &Ident) -> TokenStream {
+        let ident = &self.ident;
+        let type_ = &self.type_;
+
+        match self.encoding {
+            Encoding::TlvParameter => quote! {
+                let (#ident, #data) = crate::LLRPDecodable::decode(#data)?;
+            },
+
+            Encoding::TvParameter => {
+                let tv_id = 0_u8;
+                quote! {
+                    let (#ident, #data) = crate::TvDecodable::decode_tv(#data, #tv_id)?;
+                }
+            }
+
+            Encoding::ArrayWithLength => quote! {
+                let (#ident, #data) = {
+                    let (len_bytes, mut rest) = split_at_checked(#data, 2)?;
+                    let len = u16::from_be_bytes([len_bytes[0], len_bytes[1]]);
+
+                    let mut output = <#type_>::with_capacity(len as usize);
+                    for _ in 0..len {
+                        let result = crate::LLRPDecodable::decode(rest)?;
+                        output.push(result.0);
+                        rest = result.1;
+                    }
+
+                    (output, rest)
+                };
+            },
         }
     }
-}
-
-fn valid_fields(items: &[Item]) -> impl Iterator<Item = &Item> {
-    items.iter().filter(|i| match i {
-        Item::Annotation(_) => false,
-        _ => true,
-    })
-}
-
-fn gen_field_defs(items: &[Item]) -> Vec<TokenStream> {
-    valid_fields(items).map(Item::field_def).collect()
 }
 
 const LIB_CONTENT: &[u8] = include_bytes!("../base/lib.rs");

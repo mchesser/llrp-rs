@@ -188,11 +188,6 @@ pub trait TlvDecodable: Sized {
     }
 }
 
-impl<T: TlvDecodable> LLRPDecodable for T {
-    fn decode(data: &[u8]) -> Result<(Self, &[u8])> {
-        <T as TlvDecodable>::decode_tlv(data)
-    }
-}
 
 impl<T: TlvDecodable> TlvDecodable for Option<T> {
     fn decode_tlv(data: &[u8]) -> Result<(Self, &[u8])> {
@@ -269,18 +264,27 @@ impl<E: LLRPEnumeration> crate::FromBits for E {
     }
 }
 
-pub type u1 = u8;
-pub type u2 = u8;
-pub type u3 = u8;
-pub type u4 = u8;
-pub type u5 = u8;
-pub type u6 = u8;
-pub type u7 = u8;
-pub type u9 = u16;
-pub type u10 = u16;
-pub type u11 = u16;
-pub type u12 = u16;
-pub type u13 = u16;
-pub type u14 = u16;
-pub type u15 = u16;
-pub type u96 = [u8; 12];
+#[derive(Default)]
+pub struct BitContainer {
+    pub bits: u32,
+    pub valid_bits: u8,
+}
+
+impl BitContainer {
+    pub fn read_bits<'a>(&mut self, mut data: &'a [u8], num_bits: u8) -> Result<(u32, &'a [u8])> {
+        while self.valid_bits < num_bits {
+            if data.is_empty() {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid length").into());
+            }
+            self.bits = (self.bits << 8) | data[0] as u32;
+            self.valid_bits += 8;
+            data = &data[1..];
+        }
+
+        let out = self.bits & ((1 << num_bits) - 1);
+        self.bits = self.bits >> num_bits;
+        self.valid_bits -= num_bits;
+
+        Ok((out, data))
+    }
+}

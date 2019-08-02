@@ -71,9 +71,7 @@ pub fn validate_consumed(data: &[u8]) -> Result<()> {
 pub trait LLRPMessage: Sized {
     const ID: u16;
 
-    fn decode(data: &[u8]) -> Result<(Self, &[u8])> {
-        Err(io::Error::new(io::ErrorKind::Other, "Unimplemented").into())
-    }
+    fn decode(data: &[u8]) -> Result<(Self, &[u8])>;
 
     fn id(&self) -> u16 {
         Self::ID
@@ -81,9 +79,7 @@ pub trait LLRPMessage: Sized {
 }
 
 pub trait LLRPDecodable: Sized {
-    fn decode(data: &[u8]) -> Result<(Self, &[u8])> {
-        Err(io::Error::new(io::ErrorKind::Other, "Unimplemented").into())
-    }
+    fn decode(data: &[u8]) -> Result<(Self, &[u8])>;
 }
 
 impl LLRPDecodable for bool {
@@ -150,16 +146,25 @@ impl LLRPDecodable for BitArray {
     }
 }
 
-pub trait LLRPPackedDecodable: Sized {
-    const NUM_BITS: u8;
-    fn decode_packed(value: u8) -> Result<Self>;
+pub trait FromBits {
+    fn from_bits(bits: u32) -> Self;
 }
 
-impl LLRPPackedDecodable for bool {
-    const NUM_BITS: u8 = 1;
+impl FromBits for bool {
+    fn from_bits(bits: u32) -> Self {
+        (bits & 1) != 0
+    }
+}
 
-    fn decode_packed(value: u8) -> Result<Self> {
-        Ok((value & 1) == 1)
+impl FromBits for u8 {
+    fn from_bits(bits: u32) -> Self {
+        bits as u8
+    }
+}
+
+impl FromBits for u16 {
+    fn from_bits(bits: u32) -> Self {
+        bits as u16
     }
 }
 
@@ -247,6 +252,20 @@ impl<T: LLRPDecodable> TvDecodable for Option<T> {
 
         let (data, rest) = <T as LLRPDecodable>::decode(&data[1..])?;
         Ok((Some(data), rest))
+    }
+}
+
+pub trait LLRPEnumeration: Sized {
+    fn from_value<T: Into<u32>>(value: T) -> Result<Self>;
+
+    fn from_vec<T: Into<u32>>(value: Vec<T>) -> Result<Vec<Self>> {
+        value.into_iter().map(|x| Self::from_value(x.into())).collect()
+    }
+}
+
+impl<E: LLRPEnumeration> crate::FromBits for E {
+    fn from_bits(bits: u32) -> Self {
+        Self::from_value(bits).unwrap()
     }
 }
 

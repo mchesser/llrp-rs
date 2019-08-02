@@ -36,6 +36,14 @@ fn type_name(type_name: &str) -> TokenStream {
 
 fn field_encoding(type_name: &str) -> Encoding {
     match type_name {
+        "u1" => Encoding::BitPacket { num_bits: 1 },
+        "AccessSpecState" => Encoding::BitPacket { num_bits: 1 },
+        "u2" => Encoding::BitPacket { num_bits: 2 },
+        "u3" => Encoding::BitPacket { num_bits: 3 },
+        "u4" => Encoding::BitPacket { num_bits: 4 },
+        "u5" => Encoding::BitPacket { num_bits: 5 },
+        "u6" => Encoding::BitPacket { num_bits: 6 },
+        "u7" => Encoding::BitPacket { num_bits: 7 },
         "u8v" => Encoding::ArrayWithLength,
         "u16v" => Encoding::ArrayWithLength,
         "u32v" => Encoding::ArrayWithLength,
@@ -134,11 +142,15 @@ impl MessageDefinition {
         let fields = parse_items(&self.items, true);
 
         let data = Ident::new("__rest", Span::call_site());
+
         let field_defs = fields.iter().map(|field| field.field_def());
-        let decode_fields = fields.iter().map(|field| field.field_decode(&data));
         let field_names = fields.iter().map(|field| &field.ident);
 
-        quote! {
+        let mut remaining_bits = 0;
+        let decode_fields =
+            fields.iter().map(|field| field.field_decode(&data, &mut remaining_bits));
+
+        let token_stream = quote! {
             #[derive(Debug, Eq, PartialEq)]
             pub struct #name {
                 #(#field_defs,)*
@@ -149,15 +161,21 @@ impl MessageDefinition {
 
                 fn decode(data: &[u8]) -> crate::Result<(Self, &[u8])> {
                     let #data = data;
+                    let mut __spare_bits: u32 = 0;
                     #(#decode_fields)*
                     let __result = #name {
                         #(#field_names,)*
                     };
 
+                    debug_assert_eq!(__spare_bits, 0, "Bits were remaining");
+
                     Ok((__result, #data))
                 }
             }
-        }
+        };
+
+        assert_eq!(remaining_bits, 0, "{} spare bits were remaining for {}", remaining_bits, name);
+        token_stream
     }
 }
 
@@ -188,11 +206,15 @@ impl ParameterDefinition {
         let fields = parse_items(&self.items, false);
 
         let data = Ident::new("__rest", Span::call_site());
+
         let field_defs = fields.iter().map(|field| field.field_def());
-        let decode_fields = fields.iter().map(|field| field.field_decode(&data));
         let field_names = fields.iter().map(|field| &field.ident);
 
-        quote! {
+        let mut remaining_bits = 0;
+        let decode_fields =
+            fields.iter().map(|field| field.field_decode(&data, &mut remaining_bits));
+
+        let token_stream = quote! {
             #[derive(Debug, Eq, PartialEq)]
             pub struct #name {
                 #(#field_defs,)*
@@ -205,16 +227,23 @@ impl ParameterDefinition {
                     let (param_data, rest) = crate::parse_tlv_header(data, #type_num)?;
 
                     let #data = param_data;
+                    let mut __spare_bits: u32 = 0;
+
                     #(#decode_fields)*
                     let __result = #name {
                         #(#field_names,)*
                     };
+
+                    debug_assert_eq!(__spare_bits, 0, "Bits were remaining");
                     crate::validate_consumed(#data)?;
 
                     Ok((__result, rest))
                 }
             }
-        }
+        };
+
+        assert_eq!(remaining_bits, 0, "{} spare bits were remaining for {}", remaining_bits, name);
+        token_stream
     }
 }
 
@@ -236,9 +265,12 @@ impl EnumerationDefinition {
     fn decode(&self) -> TokenStream {
         let name = enum_name(&self.name);
 
+        let max_variant = self.entries.iter().map(|x| x.value).max().unwrap();
+        let required_bits = usize::next_power_of_two(max_variant as usize);
+
         let (type_, type_len): (Ident, usize) = {
-            let (t_name, len) = match self.entries.iter().map(|x| x.value).max().unwrap() {
-                x if x > 0xFF => ("u16", 2),
+            let (t_name, len) = match required_bits {
+                x if x > 8 => ("u16", 2),
                 _ => ("u8", 1),
             };
             (Ident::new(t_name, Span::call_site()), len)
@@ -255,16 +287,17 @@ impl EnumerationDefinition {
             matches.push(quote!(#value => #name::#variant_ident));
         }
 
+        let matches = &matches;
+
         quote! {
             #[derive(Debug, Eq, PartialEq)]
             pub enum #name {
                 #(#variants,)*
             }
 
-            impl crate::LLRPDecodable for #name {
-                fn decode(data: &[u8]) -> crate::Result<(Self, &[u8])> {
-                    let (data, rest) = crate::split_at_checked(data, #type_len)?;
-                    let value = match <#type_>::from_be_bytes(data.try_into().unwrap()) {
+            impl crate::LLRPEnumeration for #name {
+                fn from_value<T: Into<u32>>(value: T) -> crate::Result<Self> {
+                    let result = match value.into() {
                         #(#matches,)*
                         other => return Err(
                             std::io::Error::new(
@@ -273,7 +306,8 @@ impl EnumerationDefinition {
                             ).into()
                         )
                     };
-                    Ok((value, rest))
+
+                    Ok(result)
                 }
             }
         }
@@ -411,10 +445,15 @@ fn parse_items(items: &[Item], is_message: bool) -> Vec<MessageOrParameterField>
                     Some(enumeration) => {
                         let enum_ident = enum_name(&enumeration);
                         MessageOrParameterField {
-                            encoding: Encoding::TlvParameter,
+                            encoding: Encoding::Enum { source_type: type_.clone() },
                             ident,
                             source_type: enumeration.clone(),
-                            type_: quote!(#enum_ident),
+                            type_: if type_.ends_with("v") {
+                                quote!(Vec<#enum_ident>)
+                            }
+                            else {
+                                quote!(#enum_ident)
+                            },
                         }
                     }
                     None => MessageOrParameterField {
@@ -431,7 +470,7 @@ fn parse_items(items: &[Item], is_message: bool) -> Vec<MessageOrParameterField>
                 let type_ = Ident::new(&source_type, Span::call_site());
 
                 MessageOrParameterField {
-                    encoding: Encoding::TlvParameter,
+                    encoding: Encoding::BitPacket { num_bits: *bit_count as u8 },
                     ident: Ident::new("__reserved", Span::call_site()).into(),
                     source_type,
                     type_: quote!(#type_),
@@ -445,11 +484,13 @@ fn parse_items(items: &[Item], is_message: bool) -> Vec<MessageOrParameterField>
     output
 }
 
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 enum Encoding {
     TlvParameter,
     TvParameter,
     ArrayWithLength,
+    BitPacket { num_bits: u8 },
+    Enum { source_type: String },
 }
 
 struct MessageOrParameterField {
@@ -466,11 +507,11 @@ impl MessageOrParameterField {
         quote!(pub #ident: #ty)
     }
 
-    fn field_decode(&self, data: &Ident) -> TokenStream {
+    fn field_decode(&self, data: &Ident, remaining_bits: &mut u8) -> TokenStream {
         let ident = &self.ident;
         let type_ = &self.type_;
 
-        match self.encoding {
+        match &self.encoding {
             Encoding::TlvParameter => quote! {
                 let (#ident, #data) = crate::LLRPDecodable::decode(#data)?;
             },
@@ -497,6 +538,59 @@ impl MessageOrParameterField {
                     (output, rest)
                 };
             },
+
+            Encoding::Enum { source_type } => {
+                let tmp_ident = Ident::new("__enum_tmp", Span::call_site());
+                let source_ty = type_name(&source_type);
+                let is_vec = source_type.ends_with("v");
+
+                let source = MessageOrParameterField {
+                    encoding: field_encoding(&source_type),
+                    ident: tmp_ident.clone(),
+                    source_type: source_type.clone(),
+                    type_: source_ty.clone(),
+                };
+
+                let source_decode = source.field_decode(data, remaining_bits);
+
+                if is_vec {
+                    quote! {
+                        #source_decode
+                        let #ident = LLRPEnumeration::from_vec::<u8>(#tmp_ident)?;
+                    }
+                }
+                else {
+                    quote! {
+                        #source_decode
+                        let #ident = LLRPEnumeration::from_value::<#source_ty>(#tmp_ident)?;
+                    }
+                }
+            }
+
+            &Encoding::BitPacket { num_bits } => {
+                let get_more_bits = match *remaining_bits {
+                    x if x >= num_bits => {
+                        *remaining_bits = *remaining_bits - num_bits;
+                        quote! {}
+                    }
+
+                    x if x + 8 >= num_bits => {
+                        *remaining_bits = (*remaining_bits + 8) - num_bits;
+                        quote! {
+                            let (split_byte, #data) = crate::split_at_checked(#data, 1)?;
+                            __spare_bits = (__spare_bits << 8) | (split_byte[0] as u32);
+                        }
+                    }
+
+                    _ => panic!("Too many bits in packed struct"),
+                };
+
+                quote! {
+                    #get_more_bits
+                    let #ident = <#type_>::from_bits(__spare_bits & ((1 << #num_bits) - 1));
+                    __spare_bits = __spare_bits >> #num_bits;
+                }
+            }
         }
     }
 }
@@ -526,7 +620,7 @@ fn main() {
     writeln!(messages_out, "use crate::{{common::*, parameters::*, enumerations::*, choices::*}};")
         .unwrap();
     writeln!(params_out, "use crate::{{common::*, enumerations::*, choices::*}};").unwrap();
-    writeln!(enums_out, "use std::convert::TryInto;").unwrap();
+    writeln!(enums_out, "use std::convert::TryInto; use crate::{{common::*}};").unwrap();
 
     for item in def.definitions {
         let item: Definition = item;

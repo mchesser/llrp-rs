@@ -176,29 +176,36 @@ fn decode_field(field: &Field, data: &Ident) -> TokenStream {
 
         Encoding::ArrayOfT { inner } => {
             let decode_inner = decode_field(&inner, data);
+            let inner_ident = &inner.ident;
+
             quote! {
                 let (len, #data) = u16::decode(#data)?;
                 let mut #ident = <#ty>::with_capacity(len as usize);
                 for _ in 0..len {
                     #decode_inner
-                    #ident.push(__item);
+                    #ident.push(#inner_ident);
                 }
             }
         }
 
         Encoding::Enum { inner } => {
             let decode_inner = decode_field(&inner, data);
-            let inner_ty = &inner.ty;
-            if field.is_vec() {
-                quote! {
-                    #decode_inner
-                    let #ident = LLRPEnumeration::from_vec::<#inner_ty>(__item)?;
+            let inner_ident = &inner.ident;
+
+            match &inner.encoding {
+                Encoding::ArrayOfT { inner: array_element } => {
+                    let element_ty = &array_element.ty;
+                    quote! {
+                        #decode_inner
+                        let #ident = LLRPEnumeration::from_vec::<#element_ty>(#inner_ident)?;
+                    }
                 }
-            }
-            else {
-                quote! {
-                    #decode_inner
-                    let #ident = LLRPEnumeration::from_value::<#inner_ty>(__item)?;
+                _ => {
+                    let inner_ty = &inner.ty;
+                    quote! {
+                        #decode_inner
+                        let #ident = LLRPEnumeration::from_value::<#inner_ty>(#inner_ident)?;
+                    }
                 }
             }
         }

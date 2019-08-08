@@ -40,7 +40,7 @@ fn main() {
     }
 
     let mut enums_out = file_writer("enumerations.rs");
-    writeln!(enums_out, "use std::convert::TryInto; use crate::{{common::*}};").unwrap();
+    writeln!(enums_out, "use crate::{{common::*}};").unwrap();
 
     for enumeration in code.enumerations {
         writeln!(enums_out, "{}", enumeration).unwrap();

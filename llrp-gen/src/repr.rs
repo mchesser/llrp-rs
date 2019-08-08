@@ -39,13 +39,27 @@ pub enum Encoding {
     Manual,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum Container {
-    None,
-    Box,
-    Option,
-    OptionBox,
-    Vec,
+    Raw(TokenStream),
+    Box(TokenStream),
+    Option(TokenStream),
+    OptionBox(TokenStream),
+    Vec(TokenStream),
+}
+
+impl quote::ToTokens for Container {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        use quote::TokenStreamExt;
+
+        tokens.append_all(match self {
+            Container::Raw(ty) => quote!(#ty),
+            Container::Box(ty) => quote!(Box<#ty>),
+            Container::Option(ty) => quote!(Option<#ty>),
+            Container::OptionBox(ty) => quote!(Option<Box<#ty>>),
+            Container::Vec(ty) => quote!(Vec<#ty>),
+        });
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -54,19 +68,10 @@ pub struct Field {
     pub ident: Ident,
 
     /// The type of the field
-    pub ty: TokenStream,
+    pub ty: Container,
 
     /// Represents how the field is encoded
     pub encoding: Encoding,
-}
-
-impl Field {
-    pub fn is_vec(&self) -> bool {
-        match self.encoding {
-            Encoding::ArrayOfT { .. } => true,
-            _ => false,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -155,19 +160,18 @@ fn parse_fields(fields: &[llrp_def::Field], tv_params: &HashMap<String, TvField>
                 map_field(type_, type_, *repeat, tv_params)
             }
 
-            llrp_def::Field::Field { type_, name, format, enumeration } => {
+            llrp_def::Field::Field { type_, name, format: _, enumeration } => {
                 match enumeration.as_ref() {
                     Some(enumeration) => {
-                        let ident = field_ident(name);
                         let enum_ident = Ident::new(enumeration, Span::call_site());
-                        let inner = inner_field("__item", type_);
+                        let inner = inner_field(type_);
 
-                        let ty = match inner.is_vec() {
-                            true => quote!(Vec<#enum_ident>),
-                            false => quote!(#enum_ident),
+                        let ty = match &inner.encoding {
+                            Encoding::ArrayOfT { .. } => Container::Vec(quote!(#enum_ident)),
+                            _ => Container::Raw(quote!(#enum_ident)),
                         };
 
-                        Field { ident, ty, encoding: Encoding::Enum { inner } }
+                        Field { ident: field_ident(name), ty, encoding: Encoding::Enum { inner } }
                     }
                     None => map_field(name, type_, Repeat::One, &tv_params),
                 }
@@ -183,59 +187,51 @@ fn parse_fields(fields: &[llrp_def::Field], tv_params: &HashMap<String, TvField>
     output
 }
 
-fn get_container(type_name: &str, repeat: Repeat) -> Container {
-    let recursive = match type_name {
-        "ParameterError" => true,
-        _ => false,
-    };
-
-    match (repeat, recursive) {
-        (Repeat::One, true) => Container::Box,
-        (Repeat::One, false) => Container::None,
-        (Repeat::ZeroOrOne, true) => Container::OptionBox,
-        (Repeat::ZeroOrOne, false) => Container::Option,
-        (Repeat::ZeroToN, _) | (Repeat::OneToN, _) => Container::Vec,
-    }
-}
-
 #[rustfmt::skip]
 fn type_of(type_name: &str) -> (TokenStream, Encoding) {
     use Encoding::*;
 
-    let (ty, encoding) = match type_name {
-        "u1"    => ("bool",      RawBits { num_bits: 1 }),
-        "u2"    => ("u8",        RawBits { num_bits: 2 }),
-        "u3"    => ("u8",        RawBits { num_bits: 3 }),
-        "u4"    => ("u8",        RawBits { num_bits: 4 }),
-        "u5"    => ("u8",        RawBits { num_bits: 5 }),
-        "u6"    => ("u8",        RawBits { num_bits: 6 }),
-        "u7"    => ("u8",        RawBits { num_bits: 7 }),
-        "u8"    => ("u8",        Manual),
-        "u9"    => ("u16",       RawBits { num_bits: 9 }),
-        "u10"   => ("u16",       RawBits { num_bits: 10 }),
-        "u11"   => ("u16",       RawBits { num_bits: 11 }),
-        "u12"   => ("u16",       RawBits { num_bits: 12 }),
-        "u13"   => ("u16",       RawBits { num_bits: 13 }),
-        "u14"   => ("u16",       RawBits { num_bits: 14 }),
-        "u15"   => ("u16",       RawBits { num_bits: 15 }),
-        "u16"   => ("u16",       Manual),
-        "u32"   => ("u32",       Manual),
-        "u64"   => ("u64",       Manual),
-        "u96"   => ("[u8; 12]",  Manual),
-        "s8"    => ("i8",        Manual),
-        "s16"   => ("i16",       Manual),
-        "s32"   => ("i32",       Manual),
-        "s64"   => ("i64",       Manual),
-        "u1v"   => ("BitArray",  Manual),
-        "u8v"   => ("Vec<u8>",   ArrayOfT { inner: inner_field("__item", "u8") }),
-        "u16v"  => ("Vec<u16>",  ArrayOfT { inner: inner_field("__item", "u16") }),
-        "u32v"  => ("Vec<u32>",  ArrayOfT { inner: inner_field("__item", "u32") }),
-        "u64v"  => ("Vec<u64>",  ArrayOfT { inner: inner_field("__item", "u64") }),
-        "utf8v" => ("String",    Manual),
-        "bytesToEnd" => ("Vec<u8>", ArrayOfT { inner: inner_field("__item", "u8") }),
+    let (mapped_name, encoding) = match type_name {
+        // Values encoded with a fixed number of bits
+        "u1"  => ("bool", RawBits { num_bits: 1 }),
+        "u2"  => ("u8",   RawBits { num_bits: 2 }),
+        "u3"  => ("u8",   RawBits { num_bits: 3 }),
+        "u4"  => ("u8",   RawBits { num_bits: 4 }),
+        "u5"  => ("u8",   RawBits { num_bits: 5 }),
+        "u6"  => ("u8",   RawBits { num_bits: 6 }),
+        "u7"  => ("u8",   RawBits { num_bits: 7 }),
+        "u9"  => ("u16",  RawBits { num_bits: 9 }),
+        "u10" => ("u16",  RawBits { num_bits: 10 }),
+        "u11" => ("u16",  RawBits { num_bits: 11 }),
+        "u12" => ("u16",  RawBits { num_bits: 12 }),
+        "u13" => ("u16",  RawBits { num_bits: 13 }),
+        "u14" => ("u16",  RawBits { num_bits: 14 }),
+        "u15" => ("u16",  RawBits { num_bits: 15 }),
+
+        // Values with manual implementations
+        "u8"    => ("u8",       Manual),
+        "u16"   => ("u16",      Manual),
+        "u32"   => ("u32",      Manual),
+        "u64"   => ("u64",      Manual),
+        "u96"   => ("[u8; 12]", Manual),
+        "s8"    => ("i8",       Manual),
+        "s16"   => ("i16",      Manual),
+        "s32"   => ("i32",      Manual),
+        "s64"   => ("i64",      Manual),
+        "u1v"   => ("BitArray", Manual),
+        "utf8v" => ("String",   Manual),
+
+        // Arrays of values
+        "u8v" | "bytesToEnd" => ("Vec<u8>", ArrayOfT { inner: inner_field("u8") }),
+        "u16v" => ("Vec<u16>", ArrayOfT { inner: inner_field("u16") }),
+        "u32v" => ("Vec<u32>", ArrayOfT { inner: inner_field("u32") }),
+        "u64v" => ("Vec<u64>", ArrayOfT { inner: inner_field("u64") }),
+
+        // Tlv encoded parameters
         other => (other, TlvParameter),
     };
-    (syn::parse_str(ty).unwrap(), encoding)
+
+    (syn::parse_str(mapped_name).unwrap(), encoding)
 }
 
 #[rustfmt::skip]
@@ -252,10 +248,10 @@ fn field_ident(name: &str) -> Ident {
     }
 }
 
-fn inner_field(name: &str, type_name: &str) -> Box<Field> {
+fn inner_field(type_name: &str) -> Box<Field> {
     let (ty, encoding) = type_of(type_name);
-    let ident = Ident::new(name, Span::call_site());
-    Box::new(Field { ident, ty, encoding })
+    let ident = Ident::new(&format!("__{}_item", type_name), Span::call_site());
+    Box::new(Field { ident, ty: Container::Raw(ty), encoding })
 }
 
 fn map_field(
@@ -266,23 +262,27 @@ fn map_field(
 ) -> Field {
     let ident = field_ident(name);
 
-    let (base_type, mut encoding) = type_of(type_name);
+    if let Some(tv_field) = tv_params.get(name) {
+        return Field {
+            ident,
+            ty: Container::Option(tv_field.ty.clone()),
+            encoding: Encoding::TvParameter { tv_id: tv_field.id },
+        };
+    }
 
-    let ty = match get_container(type_name, repeat) {
-        Container::None => quote!(#base_type),
-        Container::Box => quote!(Box<#base_type>),
+    let (base_type, encoding) = type_of(type_name);
 
-        Container::Option => match tv_params.get(name) {
-            Some(tv_field) => {
-                encoding = Encoding::TvParameter { tv_id: tv_field.id };
-                let ty = &tv_field.ty;
-                quote!(Option<#ty>)
-            }
-            None => quote!(Option<#base_type>),
-        },
-        Container::OptionBox => quote!(Option<Box<#base_type>>),
-
-        Container::Vec => quote!(Vec<#base_type>),
+    let is_recursive = match type_name {
+        "ParameterError" => true,
+        _ => false,
+    };
+    let ty = match (repeat, is_recursive) {
+        (Repeat::One, false) => Container::Raw(base_type),
+        (Repeat::One, true) => Container::Box(base_type),
+        (Repeat::ZeroOrOne, false) => Container::Option(base_type),
+        (Repeat::ZeroOrOne, true) => Container::OptionBox(base_type),
+        (Repeat::ZeroToN, _) => Container::Vec(base_type),
+        (Repeat::OneToN, _) => Container::Vec(base_type),
     };
 
     Field { ident, ty, encoding }

@@ -1,4 +1,4 @@
-#![allow(bad_style)]
+#![allow(bad_style, unused_mut)]
 
 pub mod choices;
 pub mod enumerations;

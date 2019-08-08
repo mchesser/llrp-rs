@@ -168,6 +168,13 @@ impl FromBits for u16 {
     }
 }
 
+pub fn get_tlv_message_type(data: &[u8]) -> Result<u16> {
+    if data.len() < 2 {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid length").into());
+    }
+    Ok(u16::from_be_bytes([data[0], data[1]]) & 0b11_1111_1111)
+}
+
 pub fn parse_tlv_header(data: &[u8], target_type: u16) -> Result<(&[u8], &[u8])> {
     // The first two bytes consist of [6-bit resv, 10-bit message type]
     let (type_bytes, data) = split_at_checked(data, 2)?;
@@ -187,7 +194,6 @@ pub trait TlvDecodable: Sized {
         unimplemented!()
     }
 }
-
 
 impl<T: TlvDecodable> TlvDecodable for Option<T> {
     fn decode_tlv(data: &[u8]) -> Result<(Self, &[u8])> {

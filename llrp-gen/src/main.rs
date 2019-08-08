@@ -47,6 +47,8 @@ fn main() {
     }
 
     let mut choices_out = file_writer("choices.rs");
+    writeln!(choices_out, "use crate::{{parameters::*}};").unwrap();
+
     for choice in code.choices {
         writeln!(choices_out, "{}", choice).unwrap();
     }

@@ -15,7 +15,7 @@ pub enum Definition {
     Message { id: u16, ident: Ident, fields: Vec<Field> },
     Parameter { id: u16, ident: Ident, fields: Vec<Field> },
     Enum { ident: Ident, variants: Vec<EnumVariant> },
-    Choice,
+    Choice { ident: Ident, choices: Vec<Field> },
 }
 
 #[derive(Debug, Clone)]
@@ -141,7 +141,12 @@ pub fn parse_definitions(def: llrp_def::LLRPDef) -> Vec<Definition> {
                     .collect(),
             },
 
-            llrp_def::Definition::Choice(_) | llrp_def::Definition::Namespace(_) => continue,
+            llrp_def::Definition::Choice(def) => Definition::Choice {
+                ident: Ident::new(&def.name, Span::call_site()),
+                choices: parse_fields(&def.fields, &tv_params),
+            },
+
+            llrp_def::Definition::Namespace(_) => continue,
         })
     }
 

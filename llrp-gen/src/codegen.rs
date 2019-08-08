@@ -28,7 +28,9 @@ pub fn generate(definitions: Vec<Definition>) -> GeneratedCode {
             Definition::Enum { ident, variants } => {
                 code.enumerations.push(define_enum(ident, &variants));
             }
-            Definition::Choice => {}
+            Definition::Choice { ident, choices } => {
+                code.choices.push(define_choice(ident, &choices));
+            }
         }
     }
     code
@@ -141,6 +143,47 @@ fn define_enum(ident: Ident, variants: &[EnumVariant]) -> TokenStream {
                 };
 
                 Ok(result)
+            }
+        }
+    }
+}
+
+fn define_choice(ident: Ident, choices: &[Field]) -> TokenStream {
+    let ident = &ident;
+
+    let mut variant_defs = vec![];
+    let mut matches = vec![];
+
+    for choice in choices {
+        match &choice.ty {
+            crate::repr::Container::Option(choice_ty) => {
+                variant_defs.push(quote!(#choice_ty(#choice_ty)));
+
+                matches.push(quote! {
+                    message_type if message_type == #choice_ty::ID => {
+                        let (value, rest) = crate::TlvDecodable::decode_tlv(data)?;
+                        (#ident::#choice_ty(value), rest)
+                    }
+                });
+            }
+            _ => panic!("Invalid choice container type"),
+        }
+    }
+
+    quote! {
+        #[derive(Debug, Eq, PartialEq)]
+        pub enum #ident {
+            #(#variant_defs,)*
+        }
+
+        impl crate::TlvDecodable for #ident {
+            fn decode_tlv(data: &[u8]) -> crate::Result<(Self, &[u8])> {
+                let message_type = crate::common::get_tlv_message_type(data)?;
+                let (value, rest) = match message_type {
+                    #(#matches,)*
+                    _ => return Err(crate::common::Error::InvalidType(message_type)),
+                };
+                Ok((value, rest))
             }
         }
     }

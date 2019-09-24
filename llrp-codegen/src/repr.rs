@@ -267,7 +267,7 @@ fn map_field(
 ) -> Field {
     let ident = field_ident(name);
 
-    if let Some(tv_field) = tv_params.get(name) {
+    if let Some(tv_field) = tv_params.get(type_name) {
         return Field {
             ident,
             ty: Container::Option(tv_field.ty.clone()),

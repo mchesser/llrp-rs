@@ -90,7 +90,7 @@ pub enum Repeat {
 
 impl Default for Repeat {
     fn default() -> Self {
-        Repeat::ZeroOrOne
+        Repeat::One
     }
 }
 

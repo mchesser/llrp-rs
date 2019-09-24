@@ -5,11 +5,11 @@ authors = ["Michael Chesser"]
 edition = "2018"
 
 [dependencies]
-serde = { version = "1.0.91", features = ["derive"] }
-crossbeam = "0.7.1"
-byteorder = "1.3.1"
-llrp-message = { path = "../llrp-message" }
-llrp-common = { path = "../llrp-common" }
+byteorder = "1.3.2"
+
+[build-dependencies]
+llrp-codegen = { path = "../llrp-codegen" }
+rustfmt-nightly = { git = "https://github.com/rust-lang/rustfmt" }
 
 [dev-dependencies]
 pretty_assertions = "0.6.1"

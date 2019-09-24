@@ -4,6 +4,10 @@ use std::{convert::TryInto, fmt, io};
 pub enum Error {
     IoError(io::Error),
     InvalidData,
+    InsufficientData { needed: usize, remaining: usize },
+    TrailingBits(usize),
+    TrailingBytes(usize),
+    TlvParameterLengthInvalid(u16),
     InvalidType(u16),
 }
 
@@ -12,6 +16,16 @@ impl fmt::Display for Error {
         match self {
             Error::IoError(e) => write!(f, "{}", e),
             Error::InvalidData => write!(f, "Invalid data"),
+            Error::InsufficientData { needed, remaining } => write!(
+                f,
+                "Insufficient data: {} bytes needed, but only {} remaining",
+                needed, remaining
+            ),
+            Error::TrailingBytes(len) => write!(f, "{} trailing bytes", len),
+            Error::TrailingBits(len) => write!(f, "{} trailing bits", len),
+            Error::TlvParameterLengthInvalid(len) => {
+                write!(f, "Invalid length for TLV parameter: {}", len)
+            }
             Error::InvalidType(type_id) => write!(f, "Invalid type id: {}", type_id),
         }
     }
@@ -26,14 +40,11 @@ impl From<io::Error> for Error {
 
 impl From<Error> for io::Error {
     fn from(err: Error) -> Self {
-        match err {
-            Error::IoError(e) => e,
-            Error::InvalidData => {
-                io::Error::new(io::ErrorKind::InvalidInput, format!("Invalid data"))
-            }
-            Error::InvalidType(type_id) => {
-                io::Error::new(io::ErrorKind::InvalidInput, format!("Invalid type id: {}", type_id))
-            }
+        if let Error::IoError(e) = err {
+            e
+        }
+        else {
+            io::Error::new(io::ErrorKind::InvalidInput, format!("{}", err))
         }
     }
 }
@@ -42,16 +53,16 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 /// Divides one slice into two at an index, returning an error if the index is greater than the
 /// length of the slice.
-pub fn split_at_checked(data: &[u8], mid: usize) -> Result<(&[u8], &[u8])> {
+pub(crate) fn split_at_checked(data: &[u8], mid: usize) -> Result<(&[u8], &[u8])> {
     if data.len() < mid {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid length").into());
+        return Err(Error::InsufficientData { needed: mid, remaining: data.len() });
     }
     Ok(data.split_at(mid))
 }
 
 /// Divides one slice into two, where the length of the first slice is given by a be_u16 encoded
 /// length, returning an error array is not long enough
-pub fn split_with_u16_length(data: &[u8]) -> Result<(&[u8], &[u8])> {
+pub(crate) fn split_with_u16_length(data: &[u8]) -> Result<(&[u8], &[u8])> {
     let (len, data) = split_at_checked(data, 2)
         .map(|(data, rest)| (u16::from_be_bytes(data.try_into().unwrap()), rest))?;
     split_at_checked(data, len as usize)
@@ -59,11 +70,9 @@ pub fn split_with_u16_length(data: &[u8]) -> Result<(&[u8], &[u8])> {
 
 /// Ensures that all bytes were consumed when parsing the struct fields
 /// TODO: consider adding a feature to run in `relaxed` mode where this error is ignored
-pub fn validate_consumed(data: &[u8]) -> Result<()> {
-    if data.is_empty() {
-        return Err(
-            io::Error::new(io::ErrorKind::InvalidData, "Parameter had trailing bytes").into()
-        );
+pub(crate) fn validate_consumed(data: &[u8]) -> Result<()> {
+    if !data.is_empty() {
+        return Err(Error::TrailingBytes(data.len()));
     }
     Ok(())
 }
@@ -170,28 +179,38 @@ impl FromBits for u16 {
 
 pub fn get_tlv_message_type(data: &[u8]) -> Result<u16> {
     if data.len() < 2 {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid length").into());
+        return Err(Error::InsufficientData { needed: 2, remaining: data.len() });
     }
+    // The first two bytes consist of [6-bit resv, 10-bit message type]
     Ok(u16::from_be_bytes([data[0], data[1]]) & 0b11_1111_1111)
 }
 
 pub fn parse_tlv_header(data: &[u8], target_type: u16) -> Result<(&[u8], &[u8])> {
-    // The first two bytes consist of [6-bit resv, 10-bit message type]
     let (type_bytes, data) = split_at_checked(data, 2)?;
-    let type_ = u16::from_be_bytes([type_bytes[0], type_bytes[1]]) & 0b11_1111_1111;
+    let type_ = get_tlv_message_type(type_bytes)?;
 
-    eprintln!("type = {}", type_);
     if type_ != target_type {
         return Err(Error::InvalidType(type_));
     }
 
-    split_with_u16_length(data)
+    // Decode the parameter length field.
+    // Note: The length field covers the entire parameter, including the 4 header bytes at the start
+    let (param_length, data) = u16::decode(data)?;
+    let len = param_length as usize;
+    if len < 4 || len - 4 > data.len() {
+        return Err(Error::TlvParameterLengthInvalid(param_length));
+    }
+
+    split_at_checked(data, len - 4)
 }
 
 pub trait TlvDecodable: Sized {
     const ID: u16 = 0;
-    fn decode_tlv(_data: &[u8]) -> Result<(Self, &[u8])> {
-        unimplemented!()
+
+    fn decode_tlv(_data: &[u8]) -> Result<(Self, &[u8])>;
+
+    fn check_type(ty: u16) -> bool {
+        ty == Self::ID
     }
 }
 
@@ -201,10 +220,12 @@ impl<T: TlvDecodable> TlvDecodable for Option<T> {
             return Ok((None, data));
         }
 
-        match <T as TlvDecodable>::decode_tlv(data) {
-            Ok((field, rest)) => Ok((Some(field), rest)),
-            Err(Error::InvalidType(_)) => Ok((None, data)),
-            Err(e) => return Err(e),
+        match get_tlv_message_type(data) {
+            Ok(ty) if T::check_type(ty) => {
+                let (field, rest) = <T as TlvDecodable>::decode_tlv(data)?;
+                Ok((Some(field), rest))
+            }
+            _ => Ok((None, data)),
         }
     }
 }
@@ -222,13 +243,13 @@ impl<T: TlvDecodable> TlvDecodable for Vec<T> {
 
         let mut rest = data;
         while rest.len() > 0 {
-            match <T as TlvDecodable>::decode_tlv(rest) {
-                Ok((field, new_rest)) => {
+            match get_tlv_message_type(rest) {
+                Ok(ty) if T::check_type(ty) => {
+                    let (field, new_rest) = <T as TlvDecodable>::decode_tlv(rest)?;
                     output.push(field);
                     rest = new_rest;
                 }
-                Err(Error::InvalidType(_)) => break,
-                Err(e) => return Err(e),
+                _ => break,
             }
         }
 
@@ -280,7 +301,9 @@ impl BitContainer {
     pub fn read_bits<'a>(&mut self, mut data: &'a [u8], num_bits: u8) -> Result<(u32, &'a [u8])> {
         while self.valid_bits < num_bits {
             if data.is_empty() {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid length").into());
+                let needed_bits = num_bits - self.valid_bits;
+                let needed_bytes = (1 + (needed_bits - 1) / 8) as usize;
+                return Err(Error::InsufficientData { remaining: 0, needed: needed_bytes });
             }
             self.bits = (self.bits << 8) | data[0] as u32;
             self.valid_bits += 8;

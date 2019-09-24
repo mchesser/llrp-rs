@@ -1,13 +1,52 @@
 use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;
 
-use crate::repr::{Definition, EnumVariant, Field};
+use crate::repr::{Container, Definition, EnumVariant, Field};
 
 pub struct GeneratedCode {
-    pub messages: Vec<TokenStream>,
-    pub parameters: Vec<TokenStream>,
-    pub enumerations: Vec<TokenStream>,
-    pub choices: Vec<TokenStream>,
+    pub(crate) messages: Vec<TokenStream>,
+    pub(crate) parameters: Vec<TokenStream>,
+    pub(crate) enumerations: Vec<TokenStream>,
+    pub(crate) choices: Vec<TokenStream>,
+}
+
+impl std::fmt::Display for GeneratedCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str(include_str!("../base/common.rs"))?;
+
+        let messages = &self.messages;
+        let parameters = &self.parameters;
+        let enumerations = &self.enumerations;
+        let choices = &self.choices;
+        let body = quote! {
+            #[allow(bad_style, unused_imports, unused_mut)]
+            pub mod messages {
+                use super::{*, parameters::*, enumerations::*, choices::*};
+                #(#messages)*
+            }
+
+            #[allow(bad_style, unused_imports, unused_mut)]
+            pub mod parameters {
+                use super::{*, enumerations::*, choices::*};
+                #(#parameters)*
+            }
+
+            #[allow(bad_style, unused_imports, unused_mut)]
+            pub mod enumerations {
+                use super::{*, parameters::*, choices::*};
+                #(#enumerations)*
+            }
+
+            #[allow(bad_style, unused_imports, unused_mut)]
+            pub mod choices {
+                use super::{*, parameters::*, enumerations::*};
+                #(#choices)*
+            }
+        };
+        write!(f, "{}", body)?;
+
+        Ok(())
+    }
 }
 
 pub fn generate(definitions: Vec<Definition>) -> GeneratedCode {
@@ -20,29 +59,29 @@ pub fn generate(definitions: Vec<Definition>) -> GeneratedCode {
     for d in definitions {
         match d {
             Definition::Message { id, ident, fields } => {
-                code.messages.push(define_message(id, ident, &fields));
+                code.messages.push(define_message(id, ident, &fields, true));
             }
             Definition::Parameter { id, ident, fields } => {
-                code.parameters.push(define_parameter(id, ident, &fields));
+                code.parameters.push(define_parameter(id, ident, &fields, true));
             }
             Definition::Enum { ident, variants } => {
                 code.enumerations.push(define_enum(ident, &variants));
             }
             Definition::Choice { ident, choices } => {
-                code.choices.push(define_choice(ident, &choices));
+                code.choices.push(define_choice(ident, &choices, true));
             }
         }
     }
     code
 }
 
-fn define_message(id: u16, ident: Ident, fields: &[Field]) -> TokenStream {
+fn define_message(id: u16, ident: Ident, fields: &[Field], trace: bool) -> TokenStream {
     let data = Ident::new("__rest", Span::call_site());
 
     let field_defs = fields.iter().map(define_field);
     let field_names = fields.iter().map(|field| &field.ident);
 
-    let decode_fields = fields.iter().map(|field| decode_field(field, &data));
+    let decode_fields = fields.iter().map(|field| decode_field(field, &data, trace));
 
     quote! {
         #[derive(Debug, Eq, PartialEq)]
@@ -71,13 +110,13 @@ fn define_message(id: u16, ident: Ident, fields: &[Field]) -> TokenStream {
     }
 }
 
-fn define_parameter(id: u16, ident: Ident, fields: &[Field]) -> TokenStream {
+fn define_parameter(id: u16, ident: Ident, fields: &[Field], trace: bool) -> TokenStream {
     let data = Ident::new("__rest", Span::call_site());
 
     let field_defs = fields.iter().map(define_field);
     let field_names = fields.iter().map(|field| &field.ident);
 
-    let decode_fields = fields.iter().map(|field| decode_field(field, &data));
+    let decode_fields = fields.iter().map(|field| decode_field(field, &data, trace));
 
     quote! {
         #[derive(Debug, Eq, PartialEq)]
@@ -148,44 +187,50 @@ fn define_enum(ident: Ident, variants: &[EnumVariant]) -> TokenStream {
     }
 }
 
-fn define_choice(ident: Ident, choices: &[Field]) -> TokenStream {
+fn define_choice(ident: Ident, choices: &[Field], trace: bool) -> TokenStream {
     let ident = &ident;
 
-    let mut variant_defs = vec![];
-    let mut matches = vec![];
-
-    for choice in choices {
-        match &choice.ty {
-            crate::repr::Container::Option(choice_ty) => {
-                variant_defs.push(quote!(#choice_ty(#choice_ty)));
-
-                matches.push(quote! {
-                    message_type if message_type == #choice_ty::ID => {
-                        let (value, rest) = crate::TlvDecodable::decode_tlv(data)?;
-                        (#ident::#choice_ty(value), rest)
-                    }
-                });
-            }
+    let variants: Vec<_> = choices
+        .iter()
+        .map(|choice| match &choice.ty {
+            Container::Option(choice_ty) | Container::Raw(choice_ty) => choice_ty,
             _ => panic!("Invalid choice container type"),
-        }
-    }
+        })
+        .collect();
 
     quote! {
         #[derive(Debug, Eq, PartialEq)]
         pub enum #ident {
-            #(#variant_defs,)*
+            #(#variants(#variants),)*
         }
 
         impl crate::TlvDecodable for #ident {
             fn decode_tlv(data: &[u8]) -> crate::Result<(Self, &[u8])> {
-                let message_type = crate::common::get_tlv_message_type(data)?;
+                let message_type = crate::get_tlv_message_type(data)?;
                 let (value, rest) = match message_type {
-                    #(#matches,)*
-                    _ => return Err(crate::common::Error::InvalidType(message_type)),
+                    #(
+                        message_type if message_type == #variants::ID => {
+                            let (value, rest) = crate::TlvDecodable::decode_tlv(data)?;
+                            (#ident::#variants(value), rest)
+                        },
+                    )*
+                    _ => return Err(crate::Error::InvalidType(message_type)),
                 };
                 Ok((value, rest))
             }
+
+            fn check_type(ty: u16) -> bool {
+                [#(#variants::ID,)*].contains(&ty)
+            }
         }
+
+        #(
+            impl From<#variants> for #ident {
+                fn from(value: #variants) -> #ident {
+                    #ident::#variants(value)
+                }
+            }
+        )*
     }
 }
 
@@ -195,44 +240,53 @@ fn define_field(field: &Field) -> TokenStream {
     quote!(pub #ident: #ty)
 }
 
-fn decode_field(field: &Field, data: &Ident) -> TokenStream {
+fn decode_field(field: &Field, data: &Ident, trace: bool) -> TokenStream {
     use crate::repr::Encoding;
 
     let ident = &field.ident;
     let ty = &field.ty;
 
+    let trace_stmt = gen_trace_stmt(&quote!(#ident), trace);
+
     match &field.encoding {
         Encoding::RawBits { num_bits } => {
             quote! {
+                #trace_stmt
                 let (bits, #data) = reader.read_bits(#data, #num_bits)?;
                 let #ident = <#ty>::from_bits(bits);
             }
         }
 
         Encoding::TlvParameter => quote! {
+            #trace_stmt
             let (#ident, #data) = crate::TlvDecodable::decode_tlv(#data)?;
         },
 
         Encoding::TvParameter { tv_id } => quote! {
+            #trace_stmt
             let (#ident, #data) = crate::TvDecodable::decode_tv(#data, #tv_id)?;
         },
 
         Encoding::ArrayOfT { inner } => {
-            let decode_inner = decode_field(&inner, data);
+            let decode_inner = decode_field(&inner, data, trace);
             let inner_ident = &inner.ident;
 
             quote! {
+                #trace_stmt
                 let (len, #data) = u16::decode(#data)?;
                 let mut #ident = <#ty>::with_capacity(len as usize);
+                let mut tmp = #data;
                 for _ in 0..len {
                     #decode_inner
                     #ident.push(#inner_ident);
+                    tmp = #data;
                 }
+                let #data = tmp;
             }
         }
 
         Encoding::Enum { inner } => {
-            let decode_inner = decode_field(&inner, data);
+            let decode_inner = decode_field(&inner, data, trace);
             let inner_ident = &inner.ident;
 
             match &inner.encoding {
@@ -254,7 +308,15 @@ fn decode_field(field: &Field, data: &Ident) -> TokenStream {
         }
 
         Encoding::Manual => quote! {
+            #trace_stmt
             let (#ident, #data) = crate::LLRPDecodable::decode(#data)?;
         },
+    }
+}
+
+fn gen_trace_stmt(ident: &TokenStream, enabled: bool) -> Option<TokenStream> {
+    match enabled {
+        true => Some(quote!(eprintln!("Decoding: {}", stringify!(#ident));)),
+        false => None,
     }
 }

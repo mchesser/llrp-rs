@@ -87,20 +87,11 @@ pub trait TlvParameter: Sized {
 pub trait LLRPDecodable: Sized + std::fmt::Debug {
     fn decode(decoder: &mut Decoder) -> Result<Self>;
 
-    fn decode_tv(data: &[u8], tv_id: u8) -> Result<(Self, &[u8])> {
-        if data.len() < 2 {
-            return Err(Error::InsufficientData { needed: 2, remaining: data.len() });
-        }
-
-        let found_type = data[0] & 0b0111_1111;
-        if ((data[0] & 0b1000_0000) == 0) || found_type != tv_id {
-            return Err(Error::InvalidTvType(found_type));
-        }
-
-        let mut decoder = Decoder::new(&data[1..]);
-        let value = Self::decode(&mut decoder)?;
-
-        Ok((value, decoder.bytes))
+    fn decode_tv(decoder: &mut Decoder, tv_id: u8) -> Result<Self> {
+        let mut tv_decoder = decoder.tv_param_decoder(tv_id)?;
+        let result = tv_decoder.read()?;
+        decoder.bytes = tv_decoder.bytes;
+        Ok(result)
     }
 
     fn can_decode_type(_: u16) -> bool {
@@ -174,6 +165,55 @@ impl LLRPDecodable for BitArray {
     }
 }
 
+impl<T: LLRPDecodable> LLRPDecodable for Option<T> {
+    fn decode(decoder: &mut Decoder) -> Result<Self> {
+        match decoder.get_message_type() {
+            Ok(ty) if T::can_decode_type(ty) => Ok(Some(T::decode(decoder)?)),
+            _ => Ok(None),
+        }
+    }
+
+    fn decode_tv(decoder: &mut Decoder, tv_id: u8) -> Result<Self> {
+        match decoder.get_message_type() {
+            Ok(ty) if ty == tv_id as u16 => Ok(Some(T::decode_tv(decoder, tv_id)?)),
+            _ => Ok(None),
+        }
+    }
+
+    fn can_decode_type(type_num: u16) -> bool {
+        T::can_decode_type(type_num)
+    }
+}
+
+impl<T: LLRPDecodable> LLRPDecodable for Box<T> {
+    fn decode(decoder: &mut Decoder) -> Result<Self> {
+        Ok(Box::new(T::decode(decoder)?))
+    }
+
+    fn can_decode_type(type_num: u16) -> bool {
+        T::can_decode_type(type_num)
+    }
+}
+
+impl<T: LLRPDecodable> LLRPDecodable for Vec<T> {
+    fn decode(decoder: &mut Decoder) -> Result<Self> {
+        let mut output = vec![];
+
+        while !decoder.bytes.is_empty() {
+            match decoder.get_message_type() {
+                Ok(ty) if T::can_decode_type(ty) => output.push(T::decode(decoder)?),
+                _ => break,
+            }
+        }
+
+        Ok(output)
+    }
+
+    fn can_decode_type(type_num: u16) -> bool {
+        T::can_decode_type(type_num)
+    }
+}
+
 pub(crate) trait FromBits {
     fn from_bits(bits: u32) -> Self;
 }
@@ -210,6 +250,11 @@ impl<E: LLRPEnumeration> crate::FromBits for E {
     }
 }
 
+pub enum ParameterType {
+    Tv(u8),
+    Tlv(u16),
+}
+
 #[derive(Default, Clone)]
 pub struct Decoder<'a> {
     bytes: &'a [u8],
@@ -227,10 +272,12 @@ impl<'a> Decoder<'a> {
         let mut decoder = self.clone();
         decoder.level += 1;
 
-        let type_ = decoder.read_tlv_header()?;
-        if type_ != tlv_id {
-            return Err(Error::InvalidType(type_));
+        match decoder.peek_param_type()? {
+            ParameterType::Tlv(id) if id == tlv_id => {}
+            ParameterType::Tv(id) => return Err(Error::InvalidTvType(id)),
+            ParameterType::Tlv(id) => return Err(Error::InvalidType(id)),
         }
+        decoder.bytes = &decoder.bytes[2..];
 
         // Decode the parameter length field.
         // Note: The length field covers the entire parameter including the header
@@ -245,53 +292,48 @@ impl<'a> Decoder<'a> {
         Ok(decoder)
     }
 
-    pub(crate) fn read_tv<T: LLRPDecodable>(&mut self, tv_id: u8) -> Result<T> {
-        eprintln!(
-            "{:width$} reading tv: {} (id = {})",
-            "",
-            std::any::type_name::<T>(),
-            tv_id,
-            width = self.level * 4
-        );
-        let (value, remaining) = <T as LLRPDecodable>::decode_tv(&self.bytes, tv_id)?;
-        eprintln!("{:width$} got: {:?}", "", value, width = self.level * 4);
-        self.bytes = remaining;
-        Ok(value)
+    pub fn tv_param_decoder(&mut self, tv_id: u8) -> Result<Decoder<'a>> {
+        let mut decoder = self.clone();
+        decoder.level += 1;
+
+        match decoder.peek_param_type()? {
+            ParameterType::Tv(id) if id == tv_id => {}
+            ParameterType::Tv(id) => return Err(Error::InvalidTvType(id)),
+            ParameterType::Tlv(id) => return Err(Error::InvalidType(id)),
+        }
+        decoder.bytes = &decoder.bytes[1..];
+
+        Ok(decoder)
     }
 
-    pub fn read_tlv_header(&mut self) -> Result<u16> {
-        // The first two bytes consist of [6-bit resv, 10-bit message type], so we read 2 bytes and
-        // mask the message type
-        Ok(self.read::<u16>()? & 0b11_1111_1111)
+    pub(crate) fn read_tv<T: LLRPDecodable>(&mut self, tv_id: u8) -> Result<T> {
+        T::decode_tv(self, tv_id)
     }
 
     pub fn get_message_type(&self) -> Result<u16> {
+        match self.peek_param_type()? {
+            ParameterType::Tv(id) => Ok(id as u16),
+            ParameterType::Tlv(id) => Ok(id),
+        }
+    }
+
+    pub fn peek_param_type(&self) -> Result<ParameterType> {
         let data = self.bytes;
-
-        if data.len() < 1 {
-            return Err(Error::InsufficientData { needed: 1, remaining: data.len() });
-        }
-
-        if data[0] & 0b1000_0000 != 0 {
-            // This is a tv parameter
-            let tv_param = (data[0] & 0b0111_1111) as u16;
-            return Ok(tv_param);
-        }
 
         if data.len() < 2 {
             return Err(Error::InsufficientData { needed: 2, remaining: data.len() });
         }
 
-        // This is a tlv parameter [6-bit resv, 10-bit message type]
-        let tlv_param = u16::from_be_bytes([data[0], data[1]]) & 0b11_1111_1111;
-        Ok(tlv_param)
+        if data[0] & 0b1000_0000 != 0 {
+            return Ok(ParameterType::Tv(data[0] & 0b0111_1111));
+        }
+
+        // [6-bit resv, 10-bit message type]
+        Ok(ParameterType::Tlv(u16::from_be_bytes([data[0], data[1]]) & 0b11_1111_1111))
     }
 
     pub fn read<T: LLRPDecodable>(&mut self) -> Result<T> {
-        eprintln!("{:width$} reading: {}", "", std::any::type_name::<T>(), width = self.level * 4);
-        let value = T::decode(self)?;
-        eprintln!("{:width$} got: {:?}", "", value, width = self.level * 4);
-        Ok(value)
+        T::decode(self)
     }
 
     pub fn read_bits(&mut self, num_bits: u8) -> Result<u32> {
@@ -315,65 +357,5 @@ impl<'a> Decoder<'a> {
             return Err(Error::TrailingBytes(self.bytes.len()));
         }
         Ok(())
-    }
-}
-
-impl<T: LLRPDecodable> LLRPDecodable for Option<T> {
-    fn decode(decoder: &mut Decoder) -> Result<Self> {
-        if decoder.bytes.len() == 0 {
-            return Ok(None);
-        }
-
-        match decoder.get_message_type() {
-            Ok(ty) if T::can_decode_type(ty) => Ok(Some(T::decode(decoder)?)),
-            _ => Ok(None),
-        }
-    }
-
-    fn decode_tv(data: &[u8], tv_id: u8) -> Result<(Self, &[u8])> {
-        if data.len() == 0 {
-            return Ok((None, data));
-        }
-
-        match Decoder::new(data).get_message_type() {
-            Ok(ty) if ty == tv_id as u16 => {
-                let (field, rest) = T::decode_tv(data, tv_id)?;
-                Ok((Some(field), rest))
-            }
-            _ => Ok((None, data)),
-        }
-    }
-
-    fn can_decode_type(type_num: u16) -> bool {
-        T::can_decode_type(type_num)
-    }
-}
-
-impl<T: LLRPDecodable> LLRPDecodable for Box<T> {
-    fn decode(decoder: &mut Decoder) -> Result<Self> {
-        Ok(Box::new(T::decode(decoder)?))
-    }
-
-    fn can_decode_type(type_num: u16) -> bool {
-        T::can_decode_type(type_num)
-    }
-}
-
-impl<T: LLRPDecodable> LLRPDecodable for Vec<T> {
-    fn decode(decoder: &mut Decoder) -> Result<Self> {
-        let mut output = vec![];
-
-        while !decoder.bytes.is_empty() {
-            match decoder.get_message_type() {
-                Ok(ty) if T::can_decode_type(ty) => output.push(T::decode(decoder)?),
-                _ => break,
-            }
-        }
-
-        Ok(output)
-    }
-
-    fn can_decode_type(type_num: u16) -> bool {
-        T::can_decode_type(type_num)
     }
 }

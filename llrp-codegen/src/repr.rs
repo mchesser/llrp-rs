@@ -14,6 +14,7 @@ use crate::llrp_def::{self, Repeat};
 pub enum Definition {
     Message { id: u16, ident: Ident, fields: Vec<Field> },
     Parameter { id: u16, ident: Ident, fields: Vec<Field> },
+    TvParameter { id: u8, ident: Ident, fields: Vec<Field> },
     Enum { ident: Ident, variants: Vec<EnumVariant> },
     Choice { ident: Ident, choices: Vec<Field> },
 }
@@ -78,6 +79,7 @@ pub struct Field {
 pub struct TvField {
     pub id: u8,
     pub ty: TokenStream,
+    pub required: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -90,10 +92,20 @@ pub struct EnumVariant {
 }
 
 pub fn parse_definitions(def: llrp_def::LLRPDef) -> Vec<Definition> {
-    // First identify any TV parameters
+    let mut definitions = vec![];
+
+    // First define TV parameters (since these can change how regular parameters are defined)
     let mut tv_params = HashMap::new();
     for definiton in &def.definitions {
         if let llrp_def::Definition::Parameter(param_def) = definiton {
+            // Check if this parameter lies within the TV parameter range
+            if param_def.type_num > 127 {
+                continue;
+            }
+
+            let name = &param_def.name;
+            let type_num = param_def.type_num;
+            let required = param_def.required;
             let mut fields = &param_def.fields[..];
 
             // Skip annotation field if it exists
@@ -101,20 +113,18 @@ pub fn parse_definitions(def: llrp_def::LLRPDef) -> Vec<Definition> {
                 fields = &fields[1..];
             }
 
-            if fields.len() != 1 {
-                continue;
-            }
-            if let llrp_def::Field::Field { name, type_, .. } = &fields[0] {
-                if name == &param_def.name {
-                    let (ty, _) = type_of(type_);
-                    tv_params.insert(name.clone(), TvField { id: param_def.type_num as u8, ty });
-                }
-            }
+
+            let ident = Ident::new(name, Span::call_site());
+
+            let ty = quote!(#ident);
+            tv_params.insert(name.clone(), TvField { id: type_num as u8, ty, required });
+
+            let fields = parse_fields(fields, &HashMap::new());
+            definitions.push(Definition::TvParameter { id: type_num as u8, ident, fields });
         }
     }
 
     // Then parse all other definitions
-    let mut definitions = vec![];
     for definiton in &def.definitions {
         definitions.push(match definiton {
             llrp_def::Definition::Message(def) => Definition::Message {
@@ -123,11 +133,19 @@ pub fn parse_definitions(def: llrp_def::LLRPDef) -> Vec<Definition> {
                 fields: parse_fields(&def.fields, &tv_params),
             },
 
-            llrp_def::Definition::Parameter(def) => Definition::Parameter {
-                id: def.type_num,
-                ident: Ident::new(&def.name, Span::call_site()),
-                fields: parse_fields(&def.fields, &tv_params),
-            },
+            llrp_def::Definition::Parameter(def) => {
+                if def.type_num <= 127 {
+                    // This is a TV parameter (handled above)
+                    continue;
+                }
+                assert!(def.type_num < 2048, "type num should be less than 2048 ({:?})", def);
+
+                Definition::Parameter {
+                    id: def.type_num,
+                    ident: Ident::new(&def.name, Span::call_site()),
+                    fields: parse_fields(&def.fields, &tv_params),
+                }
+            }
 
             llrp_def::Definition::Enum(def) => Definition::Enum {
                 ident: Ident::new(&def.name, Span::call_site()),
@@ -267,15 +285,10 @@ fn map_field(
 ) -> Field {
     let ident = field_ident(name);
 
-    if let Some(tv_field) = tv_params.get(type_name) {
-        return Field {
-            ident,
-            ty: Container::Option(tv_field.ty.clone()),
-            encoding: Encoding::TvParameter { tv_id: tv_field.id },
-        };
-    }
-
-    let (base_type, encoding) = type_of(type_name);
+    let (base_type, encoding) = match tv_params.get(type_name) {
+        Some(tv_field) => (tv_field.ty.clone(), Encoding::TvParameter { tv_id: tv_field.id }),
+        None => type_of(type_name),
+    };
 
     let is_recursive = match type_name {
         "ParameterError" => true,

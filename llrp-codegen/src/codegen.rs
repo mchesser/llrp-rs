@@ -64,6 +64,9 @@ pub fn generate(definitions: Vec<Definition>) -> GeneratedCode {
             Definition::Parameter { id, ident, fields } => {
                 code.parameters.push(define_parameter(id, ident, &fields, true));
             }
+            Definition::TvParameter { id, ident, fields } => {
+                code.parameters.push(define_tv_parameter(id, ident, &fields, true));
+            }
             Definition::Enum { ident, variants } => {
                 code.enumerations.push(define_enum(ident, &variants));
             }
@@ -147,6 +150,30 @@ fn define_parameter(id: u16, ident: Ident, fields: &[Field], trace: bool) -> Tok
     }
 }
 
+fn define_tv_parameter(id: u8, ident: Ident, fields: &[Field], trace: bool) -> TokenStream {
+    if let [Field { ty, .. }] = fields {
+        // If there is only one field, then just use a typedef
+        return quote! {
+            pub type #ident = #ty;
+        };
+    }
+
+    // Otherwise define a new struct
+    let field_defs = fields.iter().map(define_field);
+    quote! {
+        #[derive(Debug, Eq, PartialEq)]
+        pub struct #ident {
+            #(#field_defs,)*
+        }
+
+        impl crate::LLRPDecodable for #ident {
+            fn decode(data: &[u8]) -> Result<(Self, &[u8])> {
+                unimplemented!()
+            }
+        }
+    }
+}
+
 fn define_enum(ident: Ident, variants: &[EnumVariant]) -> TokenStream {
     let ident = &ident;
 
@@ -173,12 +200,7 @@ fn define_enum(ident: Ident, variants: &[EnumVariant]) -> TokenStream {
             fn from_value<T: Into<u32>>(value: T) -> crate::Result<Self> {
                 let result = match value.into() {
                     #(#matches,)*
-                    other => return Err(
-                        std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            format!("Invalid variant: {}", other)
-                        ).into()
-                    )
+                    other => return Err(crate::Error::InvalidVariant(other)),
                 };
 
                 Ok(result)
@@ -190,28 +212,48 @@ fn define_enum(ident: Ident, variants: &[EnumVariant]) -> TokenStream {
 fn define_choice(ident: Ident, choices: &[Field], trace: bool) -> TokenStream {
     let ident = &ident;
 
-    let variants: Vec<_> = choices
-        .iter()
-        .map(|choice| match &choice.ty {
+    let mut tv_variants = vec![];
+    let mut decode_tv_params = vec![];
+
+    let mut tlv_variants = vec![];
+
+    for choice in choices {
+        let ty = match &choice.ty {
             Container::Option(choice_ty) | Container::Raw(choice_ty) => choice_ty,
             _ => panic!("Invalid choice container type"),
-        })
-        .collect();
+        };
+        match choice.encoding {
+            crate::repr::Encoding::TvParameter { tv_id } => {
+                let tv_id = tv_id as u16;
+                tv_variants.push(ty.clone());
+                decode_tv_params.push(quote! {
+                    #tv_id => {
+                        let (value, rest) = crate::LLRPDecodable::decode(data)?;
+                        (#ident::#ty(value), rest)
+                    }
+                });
+            },
+            _ => tlv_variants.push(ty.clone()),
+        }
+    }
 
     quote! {
         #[derive(Debug, Eq, PartialEq)]
         pub enum #ident {
-            #(#variants(#variants),)*
+            #(#tlv_variants(#tlv_variants),)*
+            #(#tv_variants(#tv_variants),)*
         }
 
         impl crate::TlvDecodable for #ident {
             fn decode_tlv(data: &[u8]) -> crate::Result<(Self, &[u8])> {
                 let message_type = crate::get_tlv_message_type(data)?;
                 let (value, rest) = match message_type {
+                    #(#decode_tv_params,)*
+
                     #(
-                        message_type if message_type == #variants::ID => {
+                        message_type if message_type == #tlv_variants::ID => {
                             let (value, rest) = crate::TlvDecodable::decode_tlv(data)?;
-                            (#ident::#variants(value), rest)
+                            (#ident::#tlv_variants(value), rest)
                         },
                     )*
                     _ => return Err(crate::Error::InvalidType(message_type)),
@@ -220,14 +262,14 @@ fn define_choice(ident: Ident, choices: &[Field], trace: bool) -> TokenStream {
             }
 
             fn check_type(ty: u16) -> bool {
-                [#(#variants::ID,)*].contains(&ty)
+                [#(#tlv_variants::ID,)*].contains(&ty)
             }
         }
 
         #(
-            impl From<#variants> for #ident {
-                fn from(value: #variants) -> #ident {
-                    #ident::#variants(value)
+            impl From<#tlv_variants> for #ident {
+                fn from(value: #tlv_variants) -> #ident {
+                    #ident::#tlv_variants(value)
                 }
             }
         )*

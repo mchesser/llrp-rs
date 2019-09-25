@@ -10,10 +10,6 @@ fn utc_timestamp(microseconds: u64) -> Timestamp {
     Timestamp::UTCTimestamp(UTCTimestamp { microseconds })
 }
 
-fn epc_96(epc: [u8; 12]) -> EPCParameter {
-    EPC_96 { epc }.into()
-}
-
 #[test]
 fn reader_event_notifications_conn_attempt() {
     let bytes = &[
@@ -131,7 +127,7 @@ fn add_ro_spec() {
         current_state: ROSpecState::Disabled,
         ro_boundary_spec: ROBoundarySpec {
             ro_spec_start_trigger: ROSpecStartTrigger {
-                ro_spec_start_trigger_type: ROSpecStartTriggerType::Null,
+                ro_spec_start_trigger_type: ROSpecStartTriggerType::Immediate,
                 periodic_trigger_value: None,
                 gpi_trigger_value: None,
             },
@@ -291,7 +287,7 @@ fn ro_access_report_inventory() {
     assert_eq!(msg.tag_report_data.len(), 1);
     let report_data = &msg.tag_report_data[0];
     let expected_report_data = TagReportData {
-        epc_parameter: epc_96([
+        epc_parameter: EPCParameter::EPC_96([
             0x0b, 0x7f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x51, 0x02, 0x38,
         ]),
         ro_spec_id: None,
@@ -300,7 +296,7 @@ fn ro_access_report_inventory() {
         antenna_id: Some(1),
         peak_rssi: Some(-68),
         channel_index: None,
-        first_seen_timestamp_utc: Some(FirstSeenTimestampUTC { microseconds: 1557458645133781 }),
+        first_seen_timestamp_utc: Some(1557458645133781),
         first_seen_timestamp_uptime: None,
         last_seen_timestamp_utc: None,
         last_seen_timestamp_uptime: None,
@@ -345,7 +341,7 @@ fn add_access_spec_read() {
         access_command: AccessCommand {
             air_protocol_tag_spec: C1G2TagSpec {
                 c1g2_target_tag: vec![C1G2TargetTag {
-                    mb: 0,
+                    mb: 1,
                     match_: true,
                     reserved: 0,
                     pointer: 0x0020,
@@ -395,7 +391,7 @@ fn ro_access_report_read_zero() {
     assert_eq!(msg.tag_report_data.len(), 1);
     let report_data = &msg.tag_report_data[0];
     let expected_report_data = TagReportData {
-        epc_parameter: epc_96([
+        epc_parameter: EPCParameter::EPC_96([
             0x0b, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x51, 0x02, 0x38,
         ]),
         ro_spec_id: None,
@@ -404,7 +400,7 @@ fn ro_access_report_read_zero() {
         antenna_id: Some(1),
         peak_rssi: Some(-68),
         channel_index: None,
-        first_seen_timestamp_utc: Some(FirstSeenTimestampUTC { microseconds: 1557458648797865 }),
+        first_seen_timestamp_utc: Some(1557458648797865),
         first_seen_timestamp_uptime: None,
         last_seen_timestamp_utc: None,
         last_seen_timestamp_uptime: None,
@@ -445,7 +441,7 @@ fn ro_access_report_read() {
     assert_eq!(msg.tag_report_data.len(), 1);
     let report_data = &msg.tag_report_data[0];
     let expected_report_data = TagReportData {
-        epc_parameter: epc_96([
+        epc_parameter: EPCParameter::EPC_96([
             0x0b, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x51, 0x02, 0x38,
         ]),
         ro_spec_id: None,
@@ -454,7 +450,7 @@ fn ro_access_report_read() {
         antenna_id: Some(1),
         peak_rssi: Some(-68),
         channel_index: None,
-        first_seen_timestamp_utc: Some(FirstSeenTimestampUTC { microseconds: 1557458648804222 }),
+        first_seen_timestamp_utc: Some(1557458648804222),
         first_seen_timestamp_uptime: None,
         last_seen_timestamp_utc: None,
         last_seen_timestamp_uptime: None,
@@ -508,7 +504,7 @@ fn add_access_spec_blockwrite() {
         access_command: AccessCommand {
             air_protocol_tag_spec: C1G2TagSpec {
                 c1g2_target_tag: vec![C1G2TargetTag {
-                    mb: 0,
+                    mb: 1,
                     match_: true,
                     reserved: 0,
                     pointer: 0x0020,
@@ -558,7 +554,7 @@ fn ro_access_report_blockwrite() {
     assert_eq!(msg.tag_report_data.len(), 1);
     let report_data = &msg.tag_report_data[0];
     let expected_report_data = TagReportData {
-        epc_parameter: epc_96([
+        epc_parameter: EPCParameter::EPC_96([
             0x0b, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x51, 0x02, 0x38,
         ]),
         ro_spec_id: None,
@@ -567,7 +563,7 @@ fn ro_access_report_blockwrite() {
         antenna_id: Some(1),
         peak_rssi: Some(-68),
         channel_index: None,
-        first_seen_timestamp_utc: Some(FirstSeenTimestampUTC { microseconds: 1557458648546781 }),
+        first_seen_timestamp_utc: Some(1557458648546781),
         first_seen_timestamp_uptime: None,
         last_seen_timestamp_utc: None,
         last_seen_timestamp_uptime: None,

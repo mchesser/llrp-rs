@@ -3,19 +3,19 @@ use std::{convert::TryInto, fmt, io};
 #[derive(Debug)]
 pub enum Error {
     IoError(io::Error),
-    InvalidData,
     InsufficientData { needed: usize, remaining: usize },
     TrailingBits(usize),
     TrailingBytes(usize),
     TlvParameterLengthInvalid(u16),
     InvalidType(u16),
+    InvalidTvType(u8),
+    InvalidVariant(u32),
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Error::IoError(e) => write!(f, "{}", e),
-            Error::InvalidData => write!(f, "Invalid data"),
             Error::InsufficientData { needed, remaining } => write!(
                 f,
                 "Insufficient data: {} bytes needed, but only {} remaining",
@@ -26,7 +26,9 @@ impl fmt::Display for Error {
             Error::TlvParameterLengthInvalid(len) => {
                 write!(f, "Invalid length for TLV parameter: {}", len)
             }
-            Error::InvalidType(type_id) => write!(f, "Invalid type id: {}", type_id),
+            Error::InvalidType(type_id) => write!(f, "Invalid type num: {}", type_id),
+            Error::InvalidTvType(type_id) => write!(f, "Invalid type num: {}", type_id),
+            Error::InvalidVariant(value) => write!(f, "Invalid variant: {}", value),
         }
     }
 }
@@ -133,6 +135,20 @@ impl LLRPDecodable for String {
     }
 }
 
+impl<T: LLRPDecodable> LLRPDecodable for Option<T> {
+    fn decode(data: &[u8]) -> Result<(Self, &[u8])> {
+        use Error::*;
+
+        match <T as LLRPDecodable>::decode(data) {
+            Ok((value, rest)) => Ok((Some(value), rest)),
+            Err(InvalidType(..)) | Err(InvalidTvType(..)) | Err(InsufficientData { .. }) => {
+                Ok((None, data))
+            }
+            Err(other) => Err(other),
+        }
+    }
+}
+
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct BitArray {
     pub bytes: Vec<u8>,
@@ -155,7 +171,7 @@ impl LLRPDecodable for BitArray {
     }
 }
 
-pub trait FromBits {
+pub(crate) trait FromBits {
     fn from_bits(bits: u32) -> Self;
 }
 
@@ -261,19 +277,18 @@ pub trait TvDecodable: Sized {
     fn decode_tv(data: &[u8], id: u8) -> Result<(Self, &[u8])>;
 }
 
-impl<T: LLRPDecodable> TvDecodable for Option<T> {
+impl<T: LLRPDecodable> TvDecodable for T {
     fn decode_tv(data: &[u8], id: u8) -> Result<(Self, &[u8])> {
         if data.len() < 2 {
-            return Ok((None, data));
+            return Err(Error::InsufficientData { needed: 2, remaining: data.len() });
         }
 
         let found_type = data[0] & 0x7F;
         if ((data[0] & 0x80) == 0) || found_type != id {
-            return Ok((None, data));
+            return Err(Error::InvalidTvType(found_type));
         }
 
-        let (data, rest) = <T as LLRPDecodable>::decode(&data[1..])?;
-        Ok((Some(data), rest))
+        <T as LLRPDecodable>::decode(&data[1..])
     }
 }
 
@@ -292,20 +307,24 @@ impl<E: LLRPEnumeration> crate::FromBits for E {
 }
 
 #[derive(Default)]
-pub struct BitContainer {
+pub(crate) struct BitContainer {
     pub bits: u32,
     pub valid_bits: u8,
 }
 
 impl BitContainer {
-    pub fn read_bits<'a>(&mut self, mut data: &'a [u8], num_bits: u8) -> Result<(u32, &'a [u8])> {
+    pub(crate) fn read_bits<'a>(
+        &mut self,
+        mut data: &'a [u8],
+        num_bits: u8,
+    ) -> Result<(u32, &'a [u8])> {
         while self.valid_bits < num_bits {
             if data.is_empty() {
                 let needed_bits = num_bits - self.valid_bits;
                 let needed_bytes = (1 + (needed_bits - 1) / 8) as usize;
                 return Err(Error::InsufficientData { remaining: 0, needed: needed_bytes });
             }
-            self.bits = (self.bits << 8) | data[0] as u32;
+            self.bits = (self.bits << 8) | data[0].reverse_bits() as u32;
             self.valid_bits += 8;
             data = &data[1..];
         }

@@ -80,8 +80,12 @@ pub trait LLRPMessage: Sized {
     }
 }
 
+pub trait TlvParameter: Sized {
+    const ID: u16;
+}
+
 pub trait LLRPDecodable: Sized + std::fmt::Debug {
-    fn decode(data: &[u8]) -> Result<(Self, &[u8])>;
+    fn decode(decoder: &mut Decoder) -> Result<Self>;
 
     fn decode_tv(data: &[u8], tv_id: u8) -> Result<(Self, &[u8])> {
         if data.len() < 2 {
@@ -93,7 +97,10 @@ pub trait LLRPDecodable: Sized + std::fmt::Debug {
             return Err(Error::InvalidTvType(found_type));
         }
 
-        Self::decode(&data[1..])
+        let mut decoder = Decoder::new(&data[1..]);
+        let value = Self::decode(&mut decoder)?;
+
+        Ok((value, decoder.bytes))
     }
 
     fn can_decode_type(_: u16) -> bool {
@@ -102,18 +109,20 @@ pub trait LLRPDecodable: Sized + std::fmt::Debug {
 }
 
 impl LLRPDecodable for bool {
-    fn decode(data: &[u8]) -> Result<(Self, &[u8])> {
-        let (data, rest) = split_at_checked(data, 1)?;
-        Ok((data[0] != 0, rest))
+    fn decode(decoder: &mut Decoder) -> Result<Self> {
+        let (data, rest) = split_at_checked(decoder.bytes, 1)?;
+        decoder.bytes = rest;
+        Ok(data[0] != 0)
     }
 }
 
 macro_rules! impl_llrp_decodable_primitive {
     ($ty: ty) => {
         impl LLRPDecodable for $ty {
-            fn decode(data: &[u8]) -> Result<(Self, &[u8])> {
-                split_at_checked(data, std::mem::size_of::<$ty>())
-                    .map(|(data, rest)| (Self::from_be_bytes(data.try_into().unwrap()), rest))
+            fn decode(decoder: &mut Decoder) -> Result<Self> {
+                let (value, rest) = split_at_checked(decoder.bytes, std::mem::size_of::<$ty>())?;
+                decoder.bytes = rest;
+                Ok(Self::from_be_bytes(value.try_into().unwrap()))
             }
         }
     };
@@ -126,20 +135,20 @@ impl_llrp_decodable_primitive!(u32);
 impl_llrp_decodable_primitive!(u64);
 
 impl LLRPDecodable for [u8; 12] {
-    fn decode(data: &[u8]) -> Result<(Self, &[u8])> {
-        split_at_checked(data, 12).map(|(data, rest)| (data.try_into().unwrap(), rest))
+    fn decode(decoder: &mut Decoder) -> Result<Self> {
+        let (value, rest) = split_at_checked(decoder.bytes, 12)?;
+        decoder.bytes = rest;
+        Ok(value.try_into().unwrap())
     }
 }
 
 impl LLRPDecodable for String {
-    fn decode(data: &[u8]) -> Result<(Self, &[u8])> {
-        let (data, rest) = split_with_u16_length(data)?;
+    fn decode(decoder: &mut Decoder) -> Result<Self> {
+        let (value, rest) = split_with_u16_length(decoder.bytes)?;
+        decoder.bytes = rest;
 
-        let string = String::from_utf8(data.into())
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-
-        eprintln!("{}", string);
-        Ok((string, rest))
+        Ok(String::from_utf8(value.into())
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?)
     }
 }
 
@@ -155,13 +164,13 @@ impl BitArray {
 }
 
 impl LLRPDecodable for BitArray {
-    fn decode(data: &[u8]) -> Result<(Self, &[u8])> {
-        let (num_bits, data) = split_at_checked(data, 2)
-            .map(|(data, rest)| (u16::from_be_bytes(data.try_into().unwrap()) as usize, rest))?;
+    fn decode(decoder: &mut Decoder) -> Result<Self> {
+        let num_bits = decoder.read::<u16>()? as usize;
 
-        let (data, rest) = split_at_checked(data, num_bits / 8)?;
+        let (data, rest) = split_at_checked(decoder.bytes, num_bits / 8)?;
+        decoder.bytes = rest;
 
-        Ok((BitArray { bytes: data.into() }, rest))
+        Ok(BitArray { bytes: data.into() })
     }
 }
 
@@ -187,88 +196,6 @@ impl FromBits for u16 {
     }
 }
 
-pub fn get_tlv_message_type(data: &[u8]) -> Result<u16> {
-    if data.len() < 2 {
-        return Err(Error::InsufficientData { needed: 2, remaining: data.len() });
-    }
-    // The first two bytes consist of [6-bit resv, 10-bit message type]
-    Ok(u16::from_be_bytes([data[0], data[1]]) & 0b11_1111_1111)
-}
-
-pub fn parse_tlv_header(data: &[u8], target_type: u16) -> Result<(&[u8], &[u8])> {
-    let (type_bytes, data) = split_at_checked(data, 2)?;
-    let type_ = get_tlv_message_type(type_bytes)?;
-
-    if type_ != target_type {
-        return Err(Error::InvalidType(type_));
-    }
-
-    // Decode the parameter length field.
-    // Note: The length field covers the entire parameter, including the 4 header bytes at the start
-    let (param_length, data) = u16::decode(data)?;
-    let len = param_length as usize;
-    if len < 4 || len - 4 > data.len() {
-        return Err(Error::TlvParameterLengthInvalid(param_length));
-    }
-
-    split_at_checked(data, len - 4)
-}
-
-pub trait TlvDecodable: Sized {
-    const ID: u16 = 0;
-
-    fn decode_tlv(_data: &[u8]) -> Result<(Self, &[u8])> {
-        unimplemented!()
-    }
-
-    fn check_type(ty: u16) -> bool {
-        ty == Self::ID
-    }
-}
-
-impl<T: TlvDecodable> TlvDecodable for Option<T> {
-    fn decode_tlv(data: &[u8]) -> Result<(Self, &[u8])> {
-        if data.len() == 0 {
-            return Ok((None, data));
-        }
-
-        match get_tlv_message_type(data) {
-            Ok(ty) if T::check_type(ty) => {
-                let (field, rest) = <T as TlvDecodable>::decode_tlv(data)?;
-                Ok((Some(field), rest))
-            }
-            _ => Ok((None, data)),
-        }
-    }
-}
-
-impl<T: TlvDecodable> TlvDecodable for Box<T> {
-    fn decode_tlv(data: &[u8]) -> Result<(Self, &[u8])> {
-        let (result, rest) = <T as TlvDecodable>::decode_tlv(data)?;
-        Ok((Box::new(result), rest))
-    }
-}
-
-impl<T: TlvDecodable> TlvDecodable for Vec<T> {
-    fn decode_tlv(data: &[u8]) -> Result<(Self, &[u8])> {
-        let mut output = vec![];
-
-        let mut rest = data;
-        while rest.len() > 0 {
-            match get_tlv_message_type(rest) {
-                Ok(ty) if T::check_type(ty) => {
-                    let (field, new_rest) = <T as TlvDecodable>::decode_tlv(rest)?;
-                    output.push(field);
-                    rest = new_rest;
-                }
-                _ => break,
-            }
-        }
-
-        Ok((output, rest))
-    }
-}
-
 pub trait LLRPEnumeration: Sized {
     fn from_value<T: Into<u32>>(value: T) -> Result<Self>;
 
@@ -284,7 +211,7 @@ impl<E: LLRPEnumeration> crate::FromBits for E {
 }
 
 #[derive(Default, Clone)]
-pub(crate) struct Decoder<'a> {
+pub struct Decoder<'a> {
     bytes: &'a [u8],
     bits: u32,
     valid_bits: u8,
@@ -319,7 +246,13 @@ impl<'a> Decoder<'a> {
     }
 
     pub(crate) fn read_tv<T: LLRPDecodable>(&mut self, tv_id: u8) -> Result<T> {
-        eprintln!("{:width$} reading tv: {} (id = {})", "", std::any::type_name::<T>(), tv_id, width = self.level * 4);
+        eprintln!(
+            "{:width$} reading tv: {} (id = {})",
+            "",
+            std::any::type_name::<T>(),
+            tv_id,
+            width = self.level * 4
+        );
         let (value, remaining) = <T as LLRPDecodable>::decode_tv(&self.bytes, tv_id)?;
         eprintln!("{:width$} got: {:?}", "", value, width = self.level * 4);
         self.bytes = remaining;
@@ -332,12 +265,32 @@ impl<'a> Decoder<'a> {
         Ok(self.read::<u16>()? & 0b11_1111_1111)
     }
 
+    pub fn get_message_type(&self) -> Result<u16> {
+        let data = self.bytes;
+
+        if data.len() < 1 {
+            return Err(Error::InsufficientData { needed: 1, remaining: data.len() });
+        }
+
+        if data[0] & 0b1000_0000 != 0 {
+            // This is a tv parameter
+            let tv_param = (data[0] & 0b0111_1111) as u16;
+            return Ok(tv_param);
+        }
+
+        if data.len() < 2 {
+            return Err(Error::InsufficientData { needed: 2, remaining: data.len() });
+        }
+
+        // This is a tlv parameter [6-bit resv, 10-bit message type]
+        let tlv_param = u16::from_be_bytes([data[0], data[1]]) & 0b11_1111_1111;
+        Ok(tlv_param)
+    }
+
     pub fn read<T: LLRPDecodable>(&mut self) -> Result<T> {
         eprintln!("{:width$} reading: {}", "", std::any::type_name::<T>(), width = self.level * 4);
-        let (value, remaining) = T::decode(self.bytes)?;
+        let value = T::decode(self)?;
         eprintln!("{:width$} got: {:?}", "", value, width = self.level * 4);
-
-        self.bytes = remaining;
         Ok(value)
     }
 
@@ -366,17 +319,14 @@ impl<'a> Decoder<'a> {
 }
 
 impl<T: LLRPDecodable> LLRPDecodable for Option<T> {
-    fn decode(data: &[u8]) -> Result<(Self, &[u8])> {
-        if data.len() == 0 {
-            return Ok((None, data));
+    fn decode(decoder: &mut Decoder) -> Result<Self> {
+        if decoder.bytes.len() == 0 {
+            return Ok(None);
         }
 
-        match get_message_type(data) {
-            Ok(ty) if T::can_decode_type(ty) => {
-                let (field, rest) = T::decode(data)?;
-                Ok((Some(field), rest))
-            }
-            _ => Ok((None, data)),
+        match decoder.get_message_type() {
+            Ok(ty) if T::can_decode_type(ty) => Ok(Some(T::decode(decoder)?)),
+            _ => Ok(None),
         }
     }
 
@@ -385,7 +335,7 @@ impl<T: LLRPDecodable> LLRPDecodable for Option<T> {
             return Ok((None, data));
         }
 
-        match get_message_type(data) {
+        match Decoder::new(data).get_message_type() {
             Ok(ty) if ty == tv_id as u16 => {
                 let (field, rest) = T::decode_tv(data, tv_id)?;
                 Ok((Some(field), rest))
@@ -400,9 +350,8 @@ impl<T: LLRPDecodable> LLRPDecodable for Option<T> {
 }
 
 impl<T: LLRPDecodable> LLRPDecodable for Box<T> {
-    fn decode(data: &[u8]) -> Result<(Self, &[u8])> {
-        let (result, rest) = T::decode(data)?;
-        Ok((Box::new(result), rest))
+    fn decode(decoder: &mut Decoder) -> Result<Self> {
+        Ok(Box::new(T::decode(decoder)?))
     }
 
     fn can_decode_type(type_num: u16) -> bool {
@@ -411,45 +360,20 @@ impl<T: LLRPDecodable> LLRPDecodable for Box<T> {
 }
 
 impl<T: LLRPDecodable> LLRPDecodable for Vec<T> {
-    fn decode(data: &[u8]) -> Result<(Self, &[u8])> {
+    fn decode(decoder: &mut Decoder) -> Result<Self> {
         let mut output = vec![];
 
-        let mut rest = data;
-        while rest.len() > 0 {
-            match get_message_type(rest) {
-                Ok(ty) if T::can_decode_type(ty) => {
-                    let (field, new_rest) = T::decode(rest)?;
-                    output.push(field);
-                    rest = new_rest;
-                }
+        while !decoder.bytes.is_empty() {
+            match decoder.get_message_type() {
+                Ok(ty) if T::can_decode_type(ty) => output.push(T::decode(decoder)?),
                 _ => break,
             }
         }
 
-        Ok((output, rest))
+        Ok(output)
     }
 
     fn can_decode_type(type_num: u16) -> bool {
         T::can_decode_type(type_num)
     }
-}
-
-pub fn get_message_type(data: &[u8]) -> Result<u16> {
-    if data.len() < 1 {
-        return Err(Error::InsufficientData { needed: 1, remaining: data.len() });
-    }
-
-    if data[0] & 0b1000_0000 != 0 {
-        // This is a tv parameter
-        let tv_param = (data[0] & 0b0111_1111) as u16;
-        return Ok(tv_param);
-    }
-
-    if data.len() < 2 {
-        return Err(Error::InsufficientData { needed: 2, remaining: data.len() });
-    }
-
-    // This is a tlv parameter [6-bit resv, 10-bit message type]
-    let tlv_param = u16::from_be_bytes([data[0], data[1]]) & 0b11_1111_1111;
-    Ok(tlv_param)
 }

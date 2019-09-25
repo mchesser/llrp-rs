@@ -124,14 +124,13 @@ fn define_parameter(id: u16, ident: Ident, fields: &[Field], trace: bool) -> Tok
             #(#field_defs,)*
         }
 
-        impl crate::TlvDecodable for #ident {
+        impl crate::TlvParameter for #ident {
             const ID: u16 = #id;
         }
 
         impl crate::LLRPDecodable for #ident {
-            fn decode(data: &[u8]) -> crate::Result<(Self, &[u8])> {
-                let mut base = Decoder::new(data);
-                let mut #decoder = base.tlv_param_decoder(#id)?;
+            fn decode(decoder: &mut Decoder) -> crate::Result<Self> {
+                let mut #decoder = decoder.tlv_param_decoder(#id)?;
 
                 #(#decode_fields)*
                 let __result = #ident {
@@ -140,7 +139,7 @@ fn define_parameter(id: u16, ident: Ident, fields: &[Field], trace: bool) -> Tok
 
                 #decoder.validate_consumed()?;
 
-                Ok((__result, base.bytes))
+                Ok(__result)
             }
 
             fn can_decode_type(type_num: u16) -> bool {
@@ -171,16 +170,12 @@ fn define_tv_parameter(id: u8, ident: Ident, fields: &[Field], trace: bool) -> T
         }
 
         impl crate::LLRPDecodable for #ident {
-            fn decode(data: &[u8]) -> Result<(Self, &[u8])> {
-                let mut #decoder = Decoder::new(data);
-
+            fn decode(decoder: &mut Decoder) -> crate::Result<Self> {
                 #(#decode_fields)*
 
-                let __result = #ident {
+                Ok(#ident {
                     #(#field_names,)*
-                };
-
-                Ok((__result, #decoder.bytes))
+                })
             }
 
             fn can_decode_type(type_num: u16) -> bool {
@@ -245,10 +240,7 @@ fn define_choice(ident: Ident, choices: &[Field], trace: bool) -> TokenStream {
                 tv_variants.push(ty.clone());
                 tv_ids.push(tv_id);
                 decode_tv_params.push(quote! {
-                    #tv_id => {
-                        let (value, rest) = crate::LLRPDecodable::decode_tv(data, #tv_id as u8)?;
-                        (#ident::#ty(value), rest)
-                    }
+                    #tv_id => Ok(#ident::#ty(decoder.read_tv(#tv_id as u8)?))
                 });
             }
             _ => tlv_variants.push(ty.clone()),
@@ -262,24 +254,19 @@ fn define_choice(ident: Ident, choices: &[Field], trace: bool) -> TokenStream {
             #(#tv_variants(#tv_variants),)*
         }
 
-        impl crate::TlvDecodable for #ident {
-        }
-
         impl crate::LLRPDecodable for #ident {
-            fn decode(data: &[u8]) -> crate::Result<(Self, &[u8])> {
-                let message_type = crate::get_message_type(data)?;
-                let (value, rest) = match message_type {
+            fn decode(decoder: &mut Decoder) -> Result<Self> {
+                let message_type = decoder.get_message_type()?;
+                match message_type {
                     #(#decode_tv_params,)*
 
                     #(
                         message_type if message_type == #tlv_variants::ID => {
-                            let (value, rest) = crate::LLRPDecodable::decode(data)?;
-                            (#ident::#tlv_variants(value), rest)
+                            Ok(#ident::#tlv_variants(decoder.read()?))
                         },
                     )*
-                    _ => return Err(crate::Error::InvalidType(message_type)),
-                };
-                Ok((value, rest))
+                    _ => Err(crate::Error::InvalidType(message_type)),
+                }
             }
 
             fn can_decode_type(type_num: u16) -> bool {

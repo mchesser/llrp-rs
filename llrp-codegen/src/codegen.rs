@@ -59,19 +59,19 @@ pub fn generate(definitions: Vec<Definition>) -> GeneratedCode {
     for d in definitions {
         match d {
             Definition::Message { id, ident, fields } => {
-                code.messages.push(define_message(id, ident, &fields, true));
+                code.messages.push(define_message(id, ident, &fields, false));
             }
             Definition::Parameter { id, ident, fields } => {
-                code.parameters.push(define_parameter(id, ident, &fields, true));
+                code.parameters.push(define_parameter(id, ident, &fields, false));
             }
             Definition::TvParameter { id, ident, fields } => {
-                code.parameters.push(define_tv_parameter(id, ident, &fields, true));
+                code.parameters.push(define_tv_parameter(id, ident, &fields, false));
             }
             Definition::Enum { ident, variants } => {
                 code.enumerations.push(define_enum(ident, &variants));
             }
             Definition::Choice { ident, choices } => {
-                code.choices.push(define_choice(ident, &choices, true));
+                code.choices.push(define_choice(ident, &choices, false));
             }
         }
     }
@@ -79,12 +79,12 @@ pub fn generate(definitions: Vec<Definition>) -> GeneratedCode {
 }
 
 fn define_message(id: u16, ident: Ident, fields: &[Field], trace: bool) -> TokenStream {
-    let data = Ident::new("__rest", Span::call_site());
+    let decoder = Ident::new("decoder", Span::call_site());
 
     let field_defs = fields.iter().map(define_field);
     let field_names = fields.iter().map(|field| &field.ident);
 
-    let decode_fields = fields.iter().map(|field| decode_field(field, &data, trace));
+    let decode_fields = fields.iter().map(|field| decode_field(field, &decoder, trace));
 
     quote! {
         #[derive(Debug, Eq, PartialEq)]
@@ -96,8 +96,7 @@ fn define_message(id: u16, ident: Ident, fields: &[Field], trace: bool) -> Token
             const ID: u16 = #id;
 
             fn decode(data: &[u8]) -> crate::Result<(Self, &[u8])> {
-                let #data = data;
-                let mut reader = BitContainer::default();
+                let mut #decoder = Decoder::new(data);
 
                 #(#decode_fields)*
 
@@ -105,21 +104,19 @@ fn define_message(id: u16, ident: Ident, fields: &[Field], trace: bool) -> Token
                     #(#field_names,)*
                 };
 
-                debug_assert_eq!(reader.valid_bits, 0, "Bits were remaining");
-
-                Ok((__result, #data))
+                Ok((__result, #decoder.bytes))
             }
         }
     }
 }
 
 fn define_parameter(id: u16, ident: Ident, fields: &[Field], trace: bool) -> TokenStream {
-    let data = Ident::new("__rest", Span::call_site());
+    let decoder = Ident::new("decoder", Span::call_site());
 
     let field_defs = fields.iter().map(define_field);
     let field_names = fields.iter().map(|field| &field.ident);
 
-    let decode_fields = fields.iter().map(|field| decode_field(field, &data, trace));
+    let decode_fields = fields.iter().map(|field| decode_field(field, &decoder, trace));
 
     quote! {
         #[derive(Debug, Eq, PartialEq)]
@@ -129,22 +126,25 @@ fn define_parameter(id: u16, ident: Ident, fields: &[Field], trace: bool) -> Tok
 
         impl crate::TlvDecodable for #ident {
             const ID: u16 = #id;
+        }
 
-            fn decode_tlv(data: &[u8]) -> crate::Result<(Self, &[u8])> {
-                let (param_data, rest) = crate::parse_tlv_header(data, #id)?;
-
-                let #data = param_data;
-                let mut reader = BitContainer::default();
+        impl crate::LLRPDecodable for #ident {
+            fn decode(data: &[u8]) -> crate::Result<(Self, &[u8])> {
+                let mut base = Decoder::new(data);
+                let mut #decoder = base.tlv_param_decoder(#id)?;
 
                 #(#decode_fields)*
                 let __result = #ident {
                     #(#field_names,)*
                 };
 
-                debug_assert_eq!(reader.valid_bits, 0, "Bits were remaining");
-                crate::validate_consumed(#data)?;
+                #decoder.validate_consumed()?;
 
-                Ok((__result, rest))
+                Ok((__result, base.bytes))
+            }
+
+            fn can_decode_type(type_num: u16) -> bool {
+                type_num == #id
             }
         }
     }
@@ -159,7 +159,11 @@ fn define_tv_parameter(id: u8, ident: Ident, fields: &[Field], trace: bool) -> T
     }
 
     // Otherwise define a new struct
+    let decoder = Ident::new("decoder", Span::call_site());
     let field_defs = fields.iter().map(define_field);
+    let field_names = fields.iter().map(|field| &field.ident);
+    let decode_fields = fields.iter().map(|field| decode_field(field, &decoder, trace));
+
     quote! {
         #[derive(Debug, Eq, PartialEq)]
         pub struct #ident {
@@ -168,7 +172,19 @@ fn define_tv_parameter(id: u8, ident: Ident, fields: &[Field], trace: bool) -> T
 
         impl crate::LLRPDecodable for #ident {
             fn decode(data: &[u8]) -> Result<(Self, &[u8])> {
-                unimplemented!()
+                let mut #decoder = Decoder::new(data);
+
+                #(#decode_fields)*
+
+                let __result = #ident {
+                    #(#field_names,)*
+                };
+
+                Ok((__result, #decoder.bytes))
+            }
+
+            fn can_decode_type(type_num: u16) -> bool {
+                type_num == #id as u16
             }
         }
     }
@@ -213,6 +229,7 @@ fn define_choice(ident: Ident, choices: &[Field], trace: bool) -> TokenStream {
     let ident = &ident;
 
     let mut tv_variants = vec![];
+    let mut tv_ids = vec![];
     let mut decode_tv_params = vec![];
 
     let mut tlv_variants = vec![];
@@ -226,13 +243,14 @@ fn define_choice(ident: Ident, choices: &[Field], trace: bool) -> TokenStream {
             crate::repr::Encoding::TvParameter { tv_id } => {
                 let tv_id = tv_id as u16;
                 tv_variants.push(ty.clone());
+                tv_ids.push(tv_id);
                 decode_tv_params.push(quote! {
                     #tv_id => {
-                        let (value, rest) = crate::LLRPDecodable::decode(data)?;
+                        let (value, rest) = crate::LLRPDecodable::decode_tv(data, #tv_id as u8)?;
                         (#ident::#ty(value), rest)
                     }
                 });
-            },
+            }
             _ => tlv_variants.push(ty.clone()),
         }
     }
@@ -245,14 +263,17 @@ fn define_choice(ident: Ident, choices: &[Field], trace: bool) -> TokenStream {
         }
 
         impl crate::TlvDecodable for #ident {
-            fn decode_tlv(data: &[u8]) -> crate::Result<(Self, &[u8])> {
-                let message_type = crate::get_tlv_message_type(data)?;
+        }
+
+        impl crate::LLRPDecodable for #ident {
+            fn decode(data: &[u8]) -> crate::Result<(Self, &[u8])> {
+                let message_type = crate::get_message_type(data)?;
                 let (value, rest) = match message_type {
                     #(#decode_tv_params,)*
 
                     #(
                         message_type if message_type == #tlv_variants::ID => {
-                            let (value, rest) = crate::TlvDecodable::decode_tlv(data)?;
+                            let (value, rest) = crate::LLRPDecodable::decode(data)?;
                             (#ident::#tlv_variants(value), rest)
                         },
                     )*
@@ -261,8 +282,8 @@ fn define_choice(ident: Ident, choices: &[Field], trace: bool) -> TokenStream {
                 Ok((value, rest))
             }
 
-            fn check_type(ty: u16) -> bool {
-                [#(#tlv_variants::ID,)*].contains(&ty)
+            fn can_decode_type(type_num: u16) -> bool {
+                [#(#tlv_variants::ID,)* #(#tv_ids,)*].contains(&type_num)
             }
         }
 
@@ -282,7 +303,7 @@ fn define_field(field: &Field) -> TokenStream {
     quote!(pub #ident: #ty)
 }
 
-fn decode_field(field: &Field, data: &Ident, trace: bool) -> TokenStream {
+fn decode_field(field: &Field, decoder: &Ident, trace: bool) -> TokenStream {
     use crate::repr::Encoding;
 
     let ident = &field.ident;
@@ -294,41 +315,37 @@ fn decode_field(field: &Field, data: &Ident, trace: bool) -> TokenStream {
         Encoding::RawBits { num_bits } => {
             quote! {
                 #trace_stmt
-                let (bits, #data) = reader.read_bits(#data, #num_bits)?;
-                let #ident = <#ty>::from_bits(bits);
+                let #ident = <#ty>::from_bits(#decoder.read_bits(#num_bits)?);
             }
         }
 
         Encoding::TlvParameter => quote! {
             #trace_stmt
-            let (#ident, #data) = crate::TlvDecodable::decode_tlv(#data)?;
+            let #ident = #decoder.read()?;
         },
 
         Encoding::TvParameter { tv_id } => quote! {
             #trace_stmt
-            let (#ident, #data) = crate::TvDecodable::decode_tv(#data, #tv_id)?;
+            let #ident = #decoder.read_tv(#tv_id)?;
         },
 
         Encoding::ArrayOfT { inner } => {
-            let decode_inner = decode_field(&inner, data, trace);
+            let decode_inner = decode_field(&inner, decoder, trace);
             let inner_ident = &inner.ident;
 
             quote! {
                 #trace_stmt
-                let (len, #data) = u16::decode(#data)?;
+                let len = #decoder.read::<u16>()?;
                 let mut #ident = <#ty>::with_capacity(len as usize);
-                let mut tmp = #data;
                 for _ in 0..len {
                     #decode_inner
                     #ident.push(#inner_ident);
-                    tmp = #data;
                 }
-                let #data = tmp;
             }
         }
 
         Encoding::Enum { inner } => {
-            let decode_inner = decode_field(&inner, data, trace);
+            let decode_inner = decode_field(&inner, decoder, trace);
             let inner_ident = &inner.ident;
 
             match &inner.encoding {
@@ -351,7 +368,7 @@ fn decode_field(field: &Field, data: &Ident, trace: bool) -> TokenStream {
 
         Encoding::Manual => quote! {
             #trace_stmt
-            let (#ident, #data) = crate::LLRPDecodable::decode(#data)?;
+            let #ident = #decoder.read()?;
         },
     }
 }

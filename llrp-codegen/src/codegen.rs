@@ -5,6 +5,7 @@ use crate::repr::{Container, Definition, EnumVariant, Field};
 
 pub struct GeneratedCode {
     pub(crate) messages: Vec<TokenStream>,
+    pub(crate) message_enum: TokenStream,
     pub(crate) parameters: Vec<TokenStream>,
     pub(crate) enumerations: Vec<TokenStream>,
     pub(crate) choices: Vec<TokenStream>,
@@ -15,6 +16,7 @@ impl std::fmt::Display for GeneratedCode {
         f.write_str(include_str!("../base/common.rs"))?;
 
         let messages = &self.messages;
+        let message_enum = &self.message_enum;
         let parameters = &self.parameters;
         let enumerations = &self.enumerations;
         let choices = &self.choices;
@@ -23,6 +25,8 @@ impl std::fmt::Display for GeneratedCode {
             pub mod messages {
                 use super::{*, parameters::*, enumerations::*, choices::*};
                 #(#messages)*
+
+                #message_enum
             }
 
             #[allow(bad_style, unused_imports, unused_mut)]
@@ -50,41 +54,73 @@ impl std::fmt::Display for GeneratedCode {
 }
 
 pub fn generate(definitions: Vec<Definition>) -> GeneratedCode {
-    let mut code = GeneratedCode {
-        messages: vec![],
-        parameters: vec![],
-        enumerations: vec![],
-        choices: vec![],
+    let mut message_names = vec![];
+    let mut message_matches = vec![];
+    for d in &definitions {
+        match d {
+            Definition::Message { id, ident, .. } => {
+                message_names.push(ident);
+                message_matches.push(quote! {
+                    #id => Ok(Self::#ident(#ident::decode(payload)?.0))
+                });
+            }
+            _ => (),
+        }
+    }
+
+    let message_enum = quote! {
+        pub enum Message {
+            #(#message_names(#message_names),)*
+        }
+
+        impl Message {
+            pub fn decode(message_id: u32, payload: &[u8]) -> crate::Result<Message> {
+                match message_id as u16 {
+                    #(#message_matches,)*
+                    _ => Err(crate::Error::UnknownMessageId(message_id))
+                }
+            }
+        }
     };
+
+    let mut messages = vec![];
+    let mut parameters = vec![];
+    let mut enumerations = vec![];
+    let mut choices = vec![];
+
     for d in definitions {
         match d {
             Definition::Message { id, ident, fields } => {
-                code.messages.push(define_message(id, ident, &fields, false));
+                messages.push(define_message(id, ident, &fields));
             }
             Definition::Parameter { id, ident, fields } => {
-                code.parameters.push(define_parameter(id, ident, &fields, false));
+                parameters.push(define_parameter(id, ident, &fields));
             }
             Definition::TvParameter { id, ident, fields } => {
-                code.parameters.push(define_tv_parameter(id, ident, &fields, false));
+                parameters.push(define_tv_parameter(id, ident, &fields));
             }
             Definition::Enum { ident, variants } => {
-                code.enumerations.push(define_enum(ident, &variants));
+                enumerations.push(define_enum(ident, &variants));
             }
-            Definition::Choice { ident, choices } => {
-                code.choices.push(define_choice(ident, &choices, false));
+            Definition::Choice { ident, choices: entries } => {
+                choices.push(define_choice(ident, &entries));
             }
         }
     }
-    code
+    GeneratedCode { messages, message_enum, parameters, enumerations, choices }
 }
 
-fn define_message(id: u16, ident: Ident, fields: &[Field], trace: bool) -> TokenStream {
+fn define_message(id: u16, ident: Ident, fields: &[Field]) -> TokenStream {
     let decoder = Ident::new("decoder", Span::call_site());
 
     let field_defs = fields.iter().map(define_field);
     let field_names = fields.iter().map(|field| &field.ident);
 
-    let decode_fields = fields.iter().map(|field| decode_field(field, &decoder, trace));
+    let decode_fields = fields.iter().map(|field| {
+        let ident = &field.ident;
+        let decoded = decode_field(field, &decoder);
+        quote!(let #ident = #decoded?;)
+    });
 
     quote! {
         #[derive(Debug, Eq, PartialEq)]
@@ -110,13 +146,17 @@ fn define_message(id: u16, ident: Ident, fields: &[Field], trace: bool) -> Token
     }
 }
 
-fn define_parameter(id: u16, ident: Ident, fields: &[Field], trace: bool) -> TokenStream {
+fn define_parameter(id: u16, ident: Ident, fields: &[Field]) -> TokenStream {
     let decoder = Ident::new("decoder", Span::call_site());
 
     let field_defs = fields.iter().map(define_field);
     let field_names = fields.iter().map(|field| &field.ident);
 
-    let decode_fields = fields.iter().map(|field| decode_field(field, &decoder, trace));
+    let decode_fields = fields.iter().map(|field| {
+        let ident = &field.ident;
+        let decoded = decode_field(field, &decoder);
+        quote!(let #ident = #decoded?;)
+    });
 
     quote! {
         #[derive(Debug, Eq, PartialEq)]
@@ -149,7 +189,7 @@ fn define_parameter(id: u16, ident: Ident, fields: &[Field], trace: bool) -> Tok
     }
 }
 
-fn define_tv_parameter(id: u8, ident: Ident, fields: &[Field], trace: bool) -> TokenStream {
+fn define_tv_parameter(id: u8, ident: Ident, fields: &[Field]) -> TokenStream {
     if let [Field { ty, .. }] = fields {
         // If there is only one field, then just use a typedef
         return quote!(pub type #ident = #ty;);
@@ -158,8 +198,11 @@ fn define_tv_parameter(id: u8, ident: Ident, fields: &[Field], trace: bool) -> T
     // Otherwise define a new struct
     let decoder = Ident::new("decoder", Span::call_site());
     let field_defs = fields.iter().map(define_field);
-    let field_names = fields.iter().map(|field| &field.ident);
-    let decode_fields = fields.iter().map(|field| decode_field(field, &decoder, trace));
+    let decode_fields = fields.iter().map(|field| {
+        let ident = &field.ident;
+        let decoded = decode_field(field, &decoder);
+        quote!(#ident: #decoded?)
+    });
 
     quote! {
         #[derive(Debug, Eq, PartialEq)]
@@ -169,10 +212,8 @@ fn define_tv_parameter(id: u8, ident: Ident, fields: &[Field], trace: bool) -> T
 
         impl crate::LLRPDecodable for #ident {
             fn decode(decoder: &mut Decoder) -> crate::Result<Self> {
-                #(#decode_fields)*
-
                 Ok(#ident {
-                    #(#field_names,)*
+                    #(#decode_fields,)*
                 })
             }
 
@@ -218,7 +259,7 @@ fn define_enum(ident: Ident, variants: &[EnumVariant]) -> TokenStream {
     }
 }
 
-fn define_choice(ident: Ident, choices: &[Field], trace: bool) -> TokenStream {
+fn define_choice(ident: Ident, choices: &[Field]) -> TokenStream {
     let ident = &ident;
 
     let mut tv_variants = vec![];
@@ -232,16 +273,18 @@ fn define_choice(ident: Ident, choices: &[Field], trace: bool) -> TokenStream {
             Container::Option(choice_ty) | Container::Raw(choice_ty) => choice_ty,
             _ => panic!("Invalid choice container type"),
         };
+
         match choice.encoding {
             crate::repr::Encoding::TvParameter { tv_id } => {
-                let tv_id = tv_id as u16;
-                tv_variants.push(ty.clone());
-                tv_ids.push(tv_id);
+                let tv_id_u16 = tv_id as u16;
+
                 decode_tv_params.push(quote! {
-                    #tv_id => Ok(#ident::#ty(decoder.read_tv(#tv_id as u8)?))
+                    #tv_id_u16 => Ok(#ident::#ty(decoder.read_tv(#tv_id)?))
                 });
+                tv_variants.push(ty);
+                tv_ids.push(tv_id_u16);
             }
-            _ => tlv_variants.push(ty.clone()),
+            _ => tlv_variants.push(ty),
         }
     }
 
@@ -254,16 +297,16 @@ fn define_choice(ident: Ident, choices: &[Field], trace: bool) -> TokenStream {
 
         impl crate::LLRPDecodable for #ident {
             fn decode(decoder: &mut Decoder) -> Result<Self> {
-                let message_type = decoder.get_message_type()?;
-                match message_type {
+                let type_num = decoder.peek_param_type()?.as_u16();
+                match type_num {
                     #(#decode_tv_params,)*
 
                     #(
-                        message_type if message_type == #tlv_variants::ID => {
+                        type_num if type_num == #tlv_variants::ID => {
                             Ok(#ident::#tlv_variants(decoder.read()?))
                         },
                     )*
-                    _ => Err(crate::Error::InvalidType(message_type)),
+                    _ => Err(crate::Error::InvalidType(type_num)),
                 }
             }
 
@@ -288,61 +331,36 @@ fn define_field(field: &Field) -> TokenStream {
     quote!(pub #ident: #ty)
 }
 
-fn decode_field(field: &Field, decoder: &Ident, trace: bool) -> TokenStream {
+fn decode_field(field: &Field, decoder: &Ident) -> TokenStream {
     use crate::repr::Encoding;
 
-    let ident = &field.ident;
     let ty = &field.ty;
-
     match &field.encoding {
-        Encoding::RawBits { num_bits } => quote! {
-            let #ident = #decoder.read_from_bits::<#ty>(#num_bits)?;
-        },
-
-        Encoding::TlvParameter => quote! {
-            let #ident = #decoder.read::<#ty>()?;
-        },
-
-        Encoding::TvParameter { tv_id } => quote! {
-            let #ident = #decoder.read_tv::<#ty>(#tv_id)?;
-        },
-
+        Encoding::RawBits { num_bits } => quote!(#decoder.read_from_bits::<#ty>(#num_bits)),
+        Encoding::TlvParameter => quote!(#decoder.read::<#ty>()),
+        Encoding::TvParameter { tv_id } => quote!(#decoder.read_tv::<#ty>(#tv_id)),
         Encoding::ArrayOfT { inner } => {
-            let decode_inner = decode_field(&inner, decoder, trace);
-            let inner_ident = &inner.ident;
-
+            let decode_inner = decode_field(&inner, decoder);
             quote! {
-                let #ident = (0..#decoder.read::<u16>()?).map(|_| {
-                    #decode_inner
-                    Ok(#inner_ident)
-                }).collect::<crate::Result<#ty>>()?;
+                (0..#decoder.read::<u16>()?)
+                    .map(|_| #decode_inner)
+                    .collect::<crate::Result<#ty>>()
             }
         }
-
         Encoding::Enum { inner } => {
-            let decode_inner = decode_field(&inner, decoder, trace);
-            let inner_ident = &inner.ident;
+            let decode_inner = decode_field(&inner, decoder);
 
             match &inner.encoding {
                 Encoding::ArrayOfT { inner: array_element } => {
                     let element_ty = &array_element.ty;
-                    quote! {
-                        #decode_inner
-                        let #ident = LLRPEnumeration::from_vec::<#element_ty>(#inner_ident)?;
-                    }
+                    quote!(LLRPEnumeration::from_vec::<#element_ty>(#decode_inner?))
                 }
                 _ => {
                     let inner_ty = &inner.ty;
-                    quote! {
-                        #decode_inner
-                        let #ident = LLRPEnumeration::from_value::<#inner_ty>(#inner_ident)?;
-                    }
+                    quote!(LLRPEnumeration::from_value::<#inner_ty>(#decode_inner?))
                 }
             }
         }
-
-        Encoding::Manual => quote! {
-            let #ident = #decoder.read::<#ty>()?;
-        },
+        Encoding::Manual => quote!(#decoder.read::<#ty>()),
     }
 }

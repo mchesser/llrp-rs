@@ -152,9 +152,7 @@ fn define_parameter(id: u16, ident: Ident, fields: &[Field], trace: bool) -> Tok
 fn define_tv_parameter(id: u8, ident: Ident, fields: &[Field], trace: bool) -> TokenStream {
     if let [Field { ty, .. }] = fields {
         // If there is only one field, then just use a typedef
-        return quote! {
-            pub type #ident = #ty;
-        };
+        return quote!(pub type #ident = #ty;);
     }
 
     // Otherwise define a new struct
@@ -296,24 +294,17 @@ fn decode_field(field: &Field, decoder: &Ident, trace: bool) -> TokenStream {
     let ident = &field.ident;
     let ty = &field.ty;
 
-    let trace_stmt = gen_trace_stmt(&quote!(#ident), trace);
-
     match &field.encoding {
-        Encoding::RawBits { num_bits } => {
-            quote! {
-                #trace_stmt
-                let #ident = <#ty>::from_bits(#decoder.read_bits(#num_bits)?);
-            }
-        }
+        Encoding::RawBits { num_bits } => quote! {
+            let #ident = #decoder.read_from_bits::<#ty>(#num_bits)?;
+        },
 
         Encoding::TlvParameter => quote! {
-            #trace_stmt
-            let #ident = #decoder.read()?;
+            let #ident = #decoder.read::<#ty>()?;
         },
 
         Encoding::TvParameter { tv_id } => quote! {
-            #trace_stmt
-            let #ident = #decoder.read_tv(#tv_id)?;
+            let #ident = #decoder.read_tv::<#ty>(#tv_id)?;
         },
 
         Encoding::ArrayOfT { inner } => {
@@ -321,13 +312,10 @@ fn decode_field(field: &Field, decoder: &Ident, trace: bool) -> TokenStream {
             let inner_ident = &inner.ident;
 
             quote! {
-                #trace_stmt
-                let len = #decoder.read::<u16>()?;
-                let mut #ident = <#ty>::with_capacity(len as usize);
-                for _ in 0..len {
+                let #ident = (0..#decoder.read::<u16>()?).map(|_| {
                     #decode_inner
-                    #ident.push(#inner_ident);
-                }
+                    Ok(#inner_ident)
+                }).collect::<crate::Result<#ty>>()?;
             }
         }
 
@@ -354,15 +342,7 @@ fn decode_field(field: &Field, decoder: &Ident, trace: bool) -> TokenStream {
         }
 
         Encoding::Manual => quote! {
-            #trace_stmt
-            let #ident = #decoder.read()?;
+            let #ident = #decoder.read::<#ty>()?;
         },
-    }
-}
-
-fn gen_trace_stmt(ident: &TokenStream, enabled: bool) -> Option<TokenStream> {
-    match enabled {
-        true => Some(quote!(eprintln!("Decoding: {}", stringify!(#ident));)),
-        false => None,
     }
 }

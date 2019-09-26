@@ -214,7 +214,7 @@ impl<T: LLRPDecodable> LLRPDecodable for Vec<T> {
     }
 }
 
-pub(crate) trait FromBits {
+pub trait FromBits {
     fn from_bits(bits: u32) -> Self;
 }
 
@@ -334,6 +334,10 @@ impl<'a> Decoder<'a> {
 
     pub fn read<T: LLRPDecodable>(&mut self) -> Result<T> {
         T::decode(self)
+    }
+
+    pub fn read_from_bits<T: FromBits>(&mut self, num_bits: u8) -> Result<T> {
+        Ok(FromBits::from_bits(self.read_bits(num_bits)?))
     }
 
     pub fn read_bits(&mut self, num_bits: u8) -> Result<u32> {

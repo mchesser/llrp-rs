@@ -57,6 +57,7 @@ pub trait LLRPMessage: Sized {
     const ID: u16;
 
     fn decode(data: &[u8]) -> Result<(Self, &[u8])>;
+    fn encode(&self, buffer: &mut Vec<u8>);
 
     fn id(&self) -> u16 {
         Self::ID
@@ -67,55 +68,69 @@ pub trait TlvParameter: Sized {
     const ID: u16;
 }
 
-pub trait LLRPDecodable: Sized + std::fmt::Debug {
-    fn decode(decoder: &mut Decoder) -> Result<Self>;
-
-    fn decode_tv(decoder: &mut Decoder, tv_id: u8) -> Result<Self> {
-        let mut tv_decoder = decoder.tv_param_decoder(tv_id)?;
-        let result = tv_decoder.read()?;
-        decoder.bytes = tv_decoder.bytes;
-        Ok(result)
-    }
-
+pub trait LLRPValue: Sized + std::fmt::Debug {
     fn can_decode_type(_: u16) -> bool {
         false
     }
-}
 
-impl LLRPDecodable for bool {
-    fn decode(decoder: &mut Decoder) -> Result<Self> {
-        Ok(decoder.read_bytes(1)?[0] != 0)
+    fn decode(decoder: &mut Decoder) -> Result<Self>;
+
+    fn decode_tv(decoder: &mut Decoder, tv_id: u8) -> Result<Self> {
+        decoder.check_param_type(tv_id as u16)?;
+        Self::decode(decoder)
+    }
+
+    fn encode(&self, _encoder: &mut Encoder) {
+        unimplemented!()
+    }
+
+    fn encode_tv(&self, encoder: &mut Encoder, tv_id: u8) {
+        encoder.write_param_type(ParameterType::Tv(tv_id));
+        self.encode(encoder)
     }
 }
 
-macro_rules! impl_llrp_decodable_primitive {
+macro_rules! impl_llrp_value_primitive {
     ($ty: ty) => {
-        impl LLRPDecodable for $ty {
+        impl LLRPValue for $ty {
             fn decode(decoder: &mut Decoder) -> Result<Self> {
                 let num_bytes = std::mem::size_of::<$ty>();
                 Ok(Self::from_be_bytes(decoder.read_bytes(num_bytes)?.try_into().unwrap()))
             }
+
+            fn encode(&self, encoder: &mut Encoder) {
+                encoder.write_bytes(&self.to_be_bytes())
+            }
         }
     };
 }
-impl_llrp_decodable_primitive!(i8);
-impl_llrp_decodable_primitive!(u8);
-impl_llrp_decodable_primitive!(u16);
-impl_llrp_decodable_primitive!(i16);
-impl_llrp_decodable_primitive!(u32);
-impl_llrp_decodable_primitive!(u64);
+impl_llrp_value_primitive!(i8);
+impl_llrp_value_primitive!(u8);
+impl_llrp_value_primitive!(u16);
+impl_llrp_value_primitive!(i16);
+impl_llrp_value_primitive!(u32);
+impl_llrp_value_primitive!(u64);
 
-impl LLRPDecodable for [u8; 12] {
+impl LLRPValue for [u8; 12] {
     fn decode(decoder: &mut Decoder) -> Result<Self> {
         Ok(decoder.read_bytes(12)?.try_into().unwrap())
     }
+
+    fn encode(&self, encoder: &mut Encoder) {
+        encoder.write_bytes(&self[..])
+    }
 }
 
-impl LLRPDecodable for String {
+impl LLRPValue for String {
     fn decode(decoder: &mut Decoder) -> Result<Self> {
         let len = decoder.read::<u16>()? as usize;
         Ok(String::from_utf8(decoder.read_bytes(len)?.into())
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?)
+    }
+
+    fn encode(&self, encoder: &mut Encoder) {
+        encoder.write_bytes(&(self.len() as u16).to_be_bytes());
+        encoder.write_bytes(self.as_bytes());
     }
 }
 
@@ -130,25 +145,43 @@ impl BitArray {
     }
 }
 
-impl LLRPDecodable for BitArray {
+impl LLRPValue for BitArray {
     fn decode(decoder: &mut Decoder) -> Result<Self> {
         let num_bits = decoder.read::<u16>()? as usize;
         Ok(BitArray { bytes: decoder.read_bytes(num_bits / 8)?.into() })
     }
+
+    fn encode(&self, encoder: &mut Encoder) {
+        encoder.write_bytes(&((self.bytes.len() / 8) as u16).to_be_bytes());
+    }
 }
 
-impl<T: LLRPDecodable> LLRPDecodable for Option<T> {
+impl<T: LLRPValue> LLRPValue for Option<T> {
     fn decode(decoder: &mut Decoder) -> Result<Self> {
         match decoder.peek_param_type() {
-            Ok(ty) if T::can_decode_type(ty.as_u16()) => Ok(Some(T::decode(decoder)?)),
+            Ok(ty) if T::can_decode_type(ty.as_u16()) => Ok(Some(decoder.read()?)),
             _ => Ok(None),
         }
     }
 
     fn decode_tv(decoder: &mut Decoder, tv_id: u8) -> Result<Self> {
         match decoder.peek_param_type() {
-            Ok(ParameterType::Tv(ty)) if ty == tv_id => Ok(Some(T::decode_tv(decoder, tv_id)?)),
+            Ok(ParameterType::Tv(ty)) if ty == tv_id => {
+                Ok(Some(decoder.read_tv(tv_id)?))
+            }
             _ => Ok(None),
+        }
+    }
+
+    fn encode(&self, encoder: &mut Encoder) {
+        if let Some(value) = self {
+            value.encode(encoder);
+        }
+    }
+
+    fn encode_tv(&self, encoder: &mut Encoder, tv_id: u8) {
+        if let Some(value) = self {
+            value.encode_tv(encoder, tv_id);
         }
     }
 
@@ -157,9 +190,13 @@ impl<T: LLRPDecodable> LLRPDecodable for Option<T> {
     }
 }
 
-impl<T: LLRPDecodable> LLRPDecodable for Box<T> {
+impl<T: LLRPValue> LLRPValue for Box<T> {
     fn decode(decoder: &mut Decoder) -> Result<Self> {
         Ok(Box::new(T::decode(decoder)?))
+    }
+
+    fn encode(&self, encoder: &mut Encoder) {
+        self.as_ref().encode(encoder)
     }
 
     fn can_decode_type(type_num: u16) -> bool {
@@ -167,7 +204,7 @@ impl<T: LLRPDecodable> LLRPDecodable for Box<T> {
     }
 }
 
-impl<T: LLRPDecodable> LLRPDecodable for Vec<T> {
+impl<T: LLRPValue> LLRPValue for Vec<T> {
     fn decode(decoder: &mut Decoder) -> Result<Self> {
         let mut output = vec![];
 
@@ -181,30 +218,52 @@ impl<T: LLRPDecodable> LLRPDecodable for Vec<T> {
         Ok(output)
     }
 
+    fn encode(&self, encoder: &mut Encoder) {
+        for value in self {
+            value.encode(encoder)
+        }
+    }
+
     fn can_decode_type(type_num: u16) -> bool {
         T::can_decode_type(type_num)
     }
 }
 
-pub trait FromBits {
+pub trait Bits {
     fn from_bits(bits: u32) -> Self;
+    fn to_bits(&self) -> u32;
 }
 
-impl FromBits for bool {
+impl Bits for bool {
     fn from_bits(bits: u32) -> Self {
         (bits & 1) != 0
     }
-}
 
-impl FromBits for u8 {
-    fn from_bits(bits: u32) -> Self {
-        bits as u8
+    fn to_bits(&self) -> u32 {
+        match self {
+            true => 1,
+            false => 0,
+        }
     }
 }
 
-impl FromBits for u16 {
+impl Bits for u8 {
+    fn from_bits(bits: u32) -> Self {
+        bits as u8
+    }
+
+    fn to_bits(&self) -> u32 {
+        *self as u32
+    }
+}
+
+impl Bits for u16 {
     fn from_bits(bits: u32) -> Self {
         bits as u16
+    }
+
+    fn to_bits(&self) -> u32 {
+        *self as u32
     }
 }
 
@@ -214,11 +273,17 @@ pub trait LLRPEnumeration: Sized {
     fn from_vec<T: Into<u32>>(value: Vec<T>) -> Result<Vec<Self>> {
         value.into_iter().map(|x| Self::from_value(x.into())).collect()
     }
+
+    fn to_value<T: Bits>(&self) -> T;
 }
 
-impl<E: LLRPEnumeration> crate::FromBits for E {
+impl<E: LLRPEnumeration> crate::Bits for E {
     fn from_bits(bits: u32) -> Self {
         Self::from_value(bits).unwrap()
+    }
+
+    fn to_bits(&self) -> u32 {
+        self.to_value::<u16>() as u32
     }
 }
 
@@ -241,18 +306,19 @@ pub struct Decoder<'a> {
     bytes: &'a [u8],
     bits: u32,
     valid_bits: u8,
-    level: usize,
 }
 
 impl<'a> Decoder<'a> {
     pub fn new(bytes: &'a [u8]) -> Decoder<'a> {
-        Decoder { bytes, bits: 0, valid_bits: 0, level: 0 }
+        Decoder { bytes, bits: 0, valid_bits: 0 }
     }
 
-    pub fn tlv_param_decoder(&mut self, tlv_id: u16) -> Result<Decoder<'a>> {
+    pub fn tlv_param<T, F>(&mut self, tlv_id: u16, decode: F) -> Result<T>
+    where
+        F: FnOnce(&mut Decoder<'a>) -> Result<T>,
+    {
         let mut decoder = self.clone();
-        decoder.level += 1;
-        decoder.check_message_type(tlv_id)?;
+        decoder.check_param_type(tlv_id)?;
 
         // Decode the parameter length field.
         // Note: The length field covers the entire parameter including the header
@@ -260,25 +326,25 @@ impl<'a> Decoder<'a> {
         if param_len < 4 || param_len > self.bytes.len() {
             return Err(Error::TlvParameterLengthInvalid(param_len as u16));
         }
-
         decoder.bytes = &self.bytes[4..param_len];
+
+        let result = decode(&mut decoder)?;
+        decoder.validate_consumed()?;
+
         self.bytes = &self.bytes[param_len..];
 
-        Ok(decoder)
+        Ok(result)
     }
 
-    pub fn tv_param_decoder(&mut self, tv_id: u8) -> Result<Decoder<'a>> {
-        let mut decoder = self.clone();
-        decoder.level += 1;
-        decoder.check_message_type(tv_id as u16)?;
-        Ok(decoder)
+    pub fn array<T, F>(&mut self, mut decode: F) -> Result<Vec<T>>
+    where
+        T: LLRPValue,
+        F: FnMut(&mut Decoder<'a>) -> Result<T>,
+    {
+        (0..self.read::<u16>()?).map(|_| decode(self)).collect()
     }
 
-    pub(crate) fn read_tv<T: LLRPDecodable>(&mut self, tv_id: u8) -> Result<T> {
-        T::decode_tv(self, tv_id)
-    }
-
-    fn check_message_type(&mut self, type_id: u16) -> Result<()> {
+    fn check_param_type(&mut self, type_id: u16) -> Result<()> {
         match self.peek_param_type()? {
             ParameterType::Tv(id) if id as u16 == type_id => {
                 self.bytes = &self.bytes[1..];
@@ -314,12 +380,16 @@ impl<'a> Decoder<'a> {
         Ok(ParameterType::Tlv(u16::from_be_bytes([data[0], data[1]]) & 0b11_1111_1111))
     }
 
-    pub fn read<T: LLRPDecodable>(&mut self) -> Result<T> {
+    pub fn read<T: LLRPValue>(&mut self) -> Result<T> {
         T::decode(self)
     }
 
-    pub fn read_from_bits<T: FromBits>(&mut self, num_bits: u8) -> Result<T> {
-        Ok(FromBits::from_bits(self.read_bits(num_bits)?))
+    pub fn read_tv<T: LLRPValue>(&mut self, tv_id: u8) -> Result<T> {
+        T::decode_tv(self, tv_id)
+    }
+
+    pub fn read_from_bits<T: Bits>(&mut self, num_bits: u8) -> Result<T> {
+        Ok(Bits::from_bits(self.read_bits(num_bits)?))
     }
 
     pub(crate) fn read_bytes(&mut self, num_bytes: usize) -> Result<&'a [u8]> {
@@ -354,5 +424,78 @@ impl<'a> Decoder<'a> {
             return Err(Error::TrailingBytes(self.bytes.len()));
         }
         Ok(())
+    }
+}
+
+pub struct Encoder<'a> {
+    buffer: &'a mut Vec<u8>,
+    bits: u32,
+    valid_bits: u8,
+}
+
+impl<'a> Encoder<'a> {
+    pub fn new(buffer: &'a mut Vec<u8>) -> Encoder<'a> {
+        Encoder { buffer, bits: 0, valid_bits: 0 }
+    }
+
+    pub fn tlv_param(&mut self, tlv_id: u16, encode: impl FnOnce(&mut Encoder<'a>)) {
+        self.write_param_type(ParameterType::Tlv(tlv_id));
+
+        let offset = self.buffer.len();
+        self.buffer.extend_from_slice(&[0, 0]);
+
+        encode(self);
+
+        let param_len = (self.buffer.len() - offset + 2) as u16;
+        self.buffer[offset..offset + 2].copy_from_slice(&param_len.to_be_bytes());
+    }
+
+    pub fn array<T>(&mut self, items: &[T], mut encode: impl FnMut(&mut Encoder<'a>, &T))
+    where
+        T: LLRPValue,
+    {
+        self.buffer.extend_from_slice(&(items.len() as u16).to_be_bytes());
+        for item in items {
+            encode(self, item)
+        }
+    }
+
+
+    fn write_param_type(&mut self, type_num: ParameterType) {
+        match type_num {
+            ParameterType::Tv(id) => {
+                self.buffer.push(id | 0b1000_0000);
+            }
+            ParameterType::Tlv(id) => {
+                self.buffer.extend_from_slice(&id.to_be_bytes());
+            }
+        }
+    }
+
+    pub fn write<T: LLRPValue>(&mut self, value: &T) {
+        value.encode(self)
+    }
+
+    pub fn write_tv<T: LLRPValue>(&mut self, value: &T, tv_id: u8) {
+        value.encode_tv(self, tv_id)
+    }
+
+    pub fn write_to_bits<T: Bits>(&mut self, value: &T, num_bits: u8) {
+        self.write_bits(value.to_bits(), num_bits)
+    }
+
+    pub(crate) fn write_bytes(&mut self, bytes: &[u8]) {
+        self.buffer.extend_from_slice(bytes);
+    }
+
+    pub(crate) fn write_bits(&mut self, bits: u32, num_bits: u8) {
+        self.bits = (self.bits << num_bits) | bits;
+        self.valid_bits += num_bits;
+
+        while self.valid_bits >= 8 {
+            self.buffer.push((self.bits & 0xFF) as u8);
+            self.bits = self.bits >> 8;
+            self.valid_bits -= 8;
+        }
     }
 }

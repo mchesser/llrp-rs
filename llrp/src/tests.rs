@@ -10,6 +10,12 @@ fn utc_timestamp(microseconds: u64) -> Timestamp {
     Timestamp::UTCTimestamp(UTCTimestamp { microseconds })
 }
 
+fn encode<M: LLRPMessage>(message: &M) -> Vec<u8> {
+    let mut buffer = Vec::new();
+    message.encode(&mut buffer);
+    buffer
+}
+
 #[test]
 fn reader_event_notifications_conn_attempt() {
     let bytes = &[
@@ -25,6 +31,8 @@ fn reader_event_notifications_conn_attempt() {
     assert_eq!(raw.value.len(), 32 - 10);
 
     let (msg, _) = ReaderEventNotification::decode(&raw.value).unwrap();
+    assert_eq!(encode(&msg), raw.value);
+
     let data = msg.reader_event_notification_data;
     assert_eq!(data.timestamp, utc_timestamp(1557458516414125));
 
@@ -42,7 +50,8 @@ fn enable_events_and_reports() {
     assert_eq!(raw.id, 8);
     assert_eq!(raw.value.len(), 0);
 
-    let _ = EnableEventsAndReports::decode(&raw.value).unwrap();
+    let (msg, _) = EnableEventsAndReports::decode(&raw.value).unwrap();
+    assert_eq!(encode(&msg), raw.value);
 }
 
 #[test]
@@ -57,6 +66,8 @@ fn delete_access_spec() {
     assert_eq!(raw.value.len(), 4);
 
     let (msg, _) = DeleteAccessspec::decode(&raw.value).unwrap();
+    assert_eq!(encode(&msg), raw.value);
+
     assert_eq!(msg.access_spec_id, 431);
 }
 
@@ -77,6 +88,8 @@ fn delete_access_spec_result_error() {
     assert_eq!(raw.value.len(), 53);
 
     let (msg, _) = DeleteAccessspecResponse::decode(&raw.value).unwrap();
+    assert_eq!(encode(&msg), raw.value);
+
     let expected = LLRPStatus {
         status_code: StatusCode::M_FieldError,
         error_description: "LLRP [409] : //AccessSpecID : invalid".into(),
@@ -98,6 +111,8 @@ fn delete_ro_spec() {
     assert_eq!(raw.value.len(), 4);
 
     let (msg, _) = DeleteRospec::decode(&raw.value).unwrap();
+    assert_eq!(encode(&msg), raw.value);
+
     assert_eq!(msg.ro_spec_id, 1);
 }
 
@@ -121,6 +136,8 @@ fn add_ro_spec() {
     assert_eq!(raw.value.len(), 82);
 
     let (msg, _) = AddRospec::decode(&raw.value).unwrap();
+    assert_eq!(encode(&msg), raw.value);
+
     let expected_spec = ROSpec {
         ro_spec_id: 1,
         priority: 0,
@@ -196,6 +213,8 @@ pub fn add_ro_spec_response() {
     assert_eq!(raw.value.len(), 8);
 
     let (msg, _) = AddRospecResponse::decode(&raw.value).unwrap();
+    assert_eq!(encode(&msg), raw.value);
+
     let status = msg.status;
     assert_eq!(status.status_code, StatusCode::M_Success);
     assert_eq!(status.error_description, "");
@@ -215,6 +234,8 @@ fn enable_ro_spec() {
     assert_eq!(raw.value.len(), 4);
 
     let (msg, _) = EnableRospec::decode(&raw.value).unwrap();
+    assert_eq!(encode(&msg), raw.value);
+
     assert_eq!(msg.ro_spec_id, 1);
 }
 
@@ -229,6 +250,8 @@ fn ro_access_report_simple() {
     assert_eq!(raw.value.len(), 0);
 
     let (msg, _) = RoAccessReport::decode(&raw.value).unwrap();
+    assert_eq!(encode(&msg), raw.value);
+
     assert!(msg.tag_report_data.is_empty());
     assert!(msg.rf_survey_report_data.is_empty());
 }
@@ -243,7 +266,8 @@ fn close_connection() {
     assert_eq!(raw.id, 35);
     assert_eq!(raw.value.len(), 0);
 
-    let _ = CloseConnection::decode(&raw.value).unwrap();
+    let (msg, _) = CloseConnection::decode(&raw.value).unwrap();
+    assert_eq!(encode(&msg), raw.value);
 }
 
 #[test]
@@ -260,6 +284,8 @@ pub fn close_connection_response() {
     assert_eq!(raw.value.len(), 8);
 
     let (msg, _) = CloseConnectionResponse::decode(&raw.value).unwrap();
+    assert_eq!(encode(&msg), raw.value);
+
     let status = msg.status;
     assert_eq!(status.status_code, StatusCode::M_Success);
     assert_eq!(status.error_description, "");
@@ -282,6 +308,8 @@ fn ro_access_report_inventory() {
     assert_eq!(raw.value.len(), 31);
 
     let (msg, _) = RoAccessReport::decode(&raw.value).unwrap();
+    assert_eq!(encode(&msg), raw.value);
+
     assert!(msg.rf_survey_report_data.is_empty());
 
     assert_eq!(msg.tag_report_data.len(), 1);
@@ -326,6 +354,8 @@ fn add_access_spec_read() {
     assert_eq!(raw.value.len(), 64);
 
     let (msg, _) = AddAccessspec::decode(&raw.value).unwrap();
+    assert_eq!(encode(&msg), raw.value);
+
     let spec = msg.access_spec;
     let expected = AccessSpec {
         access_spec_id: 431,
@@ -386,6 +416,8 @@ fn ro_access_report_read_zero() {
     assert_eq!(raw.value.len(), 40);
 
     let (msg, _) = RoAccessReport::decode(&raw.value).unwrap();
+    assert_eq!(encode(&msg), raw.value);
+
     assert!(msg.rf_survey_report_data.is_empty());
 
     assert_eq!(msg.tag_report_data.len(), 1);
@@ -436,6 +468,8 @@ fn ro_access_report_read() {
     assert_eq!(raw.value.len(), 72);
 
     let (msg, _) = RoAccessReport::decode(&raw.value).unwrap();
+    assert_eq!(encode(&msg), raw.value);
+
     assert!(msg.rf_survey_report_data.is_empty());
 
     assert_eq!(msg.tag_report_data.len(), 1);
@@ -489,6 +523,8 @@ fn add_access_spec_blockwrite() {
     assert_eq!(raw.value.len(), 66);
 
     let (msg, _) = AddAccessspec::decode(&raw.value).unwrap();
+    assert_eq!(encode(&msg), raw.value);
+
     let spec = msg.access_spec;
     let expected = AccessSpec {
         access_spec_id: 431,
@@ -593,6 +629,8 @@ fn get_reader_capabilities() {
     assert_eq!(raw.value.len(), 1);
 
     let (msg, _) = GetReaderCapabilities::decode(&raw.value).unwrap();
+    assert_eq!(encode(&msg), raw.value);
+
     assert_eq!(msg.requested_data, GetReaderCapabilitiesRequestedData::All);
     assert!(msg.custom.is_empty());
 }
@@ -711,6 +749,8 @@ fn get_reader_capabilities_response() {
     assert_eq!(raw.value.len(), 1511);
 
     let (msg, _) = GetReaderCapabilitiesResponse::decode(&raw.value).unwrap();
+    assert_eq!(encode(&msg), raw.value);
+
     let expected_status = LLRPStatus {
         status_code: StatusCode::M_Success,
         error_description: "".into(),

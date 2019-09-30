@@ -12,9 +12,11 @@ fn main() {
     output.flush().unwrap();
     drop(output);
 
-
-    let config = rustfmt_nightly::Config::default();
-    rustfmt_nightly::Session::new(config, Some(&mut std::io::sink()))
-        .format(rustfmt_nightly::Input::File(out_path))
-        .unwrap();
+    #[cfg(feature = "format")]
+    {
+        let config = rustfmt_nightly::Config::default();
+        rustfmt_nightly::Session::new(config, Some(&mut std::io::sink()))
+            .format(rustfmt_nightly::Input::File(out_path))
+            .unwrap();
+    }
 }

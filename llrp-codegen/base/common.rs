@@ -159,7 +159,7 @@ impl LLRPValue for BitArray {
 impl<T: LLRPValue> LLRPValue for Option<T> {
     fn decode(decoder: &mut Decoder) -> Result<Self> {
         match decoder.peek_param_type() {
-            Ok(ty) if T::can_decode_type(ty.as_u16()) => Ok(Some(decoder.read()?)),
+            Ok(ref ty) if T::can_decode_type(ty.as_u16()) => Ok(Some(decoder.read()?)),
             _ => Ok(None),
         }
     }

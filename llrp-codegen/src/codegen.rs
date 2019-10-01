@@ -382,7 +382,7 @@ fn decode_field(field: &Field, decoder: &Ident) -> TokenStream {
 
     let ty = &field.ty;
     match &field.encoding {
-        Encoding::RawBits { num_bits } => quote!(#decoder.read_from_bits::<#ty>(#num_bits)),
+        Encoding::RawBits { num_bits } => quote!(#decoder.read_bits::<#ty>(#num_bits)),
         Encoding::TlvParameter => quote!(#decoder.read::<#ty>()),
         Encoding::TvParameter { tv_id } => quote!(#decoder.read_tv::<#ty>(#tv_id)),
         Encoding::ArrayOfT { inner } => {
@@ -390,17 +390,14 @@ fn decode_field(field: &Field, decoder: &Ident) -> TokenStream {
             quote!(#decoder.array(|#decoder| #decode_inner))
         }
         Encoding::Enum { inner } => {
-            let decode_inner = decode_field(&inner, decoder);
-
+            let inner_ty = &inner.ty;
             match &inner.encoding {
                 Encoding::ArrayOfT { inner: array_element } => {
                     let element_ty = &array_element.ty;
-                    quote!(LLRPEnumeration::from_vec::<#element_ty>(#decode_inner?))
+                    quote!(#decoder.read_enum_array::<_, #element_ty>())
                 }
-                _ => {
-                    let inner_ty = &inner.ty;
-                    quote!(LLRPEnumeration::from_value::<#inner_ty>(#decode_inner?))
-                }
+                Encoding::RawBits { num_bits } => quote!(#decoder.read_enum_bits(#num_bits)),
+                _ => quote!(#decoder.read_enum::<#ty, #inner_ty>()),
             }
         }
         Encoding::Manual => quote!(#decoder.read::<#ty>()),
@@ -410,11 +407,9 @@ fn decode_field(field: &Field, decoder: &Ident) -> TokenStream {
 fn encode_field(field: &Field, encoder: &Ident) -> TokenStream {
     use crate::repr::Encoding;
 
-    let ty = &field.ty;
     let ident = &field.ident;
-
     match &field.encoding {
-        Encoding::RawBits { num_bits } => quote!(#encoder.write_to_bits(#ident, #num_bits)),
+        Encoding::RawBits { num_bits } => quote!(#encoder.write_bits(#ident, #num_bits)),
         Encoding::TlvParameter => quote!(#encoder.write(#ident)),
         Encoding::TvParameter { tv_id } => quote!(#encoder.write_tv(#ident, #tv_id)),
         Encoding::ArrayOfT { inner } => {
@@ -423,22 +418,16 @@ fn encode_field(field: &Field, encoder: &Ident) -> TokenStream {
             quote!(#encoder.array(#ident, |#encoder, #inner_ident| #encode_inner))
         }
         Encoding::Enum { inner } => {
-            let encode_inner = encode_field(&inner, encoder);
-            let inner_ident = &inner.ident;
-
+            let inner_ty = &inner.ty;
             match &inner.encoding {
                 Encoding::ArrayOfT { inner: array_element } => {
                     let element_ty = &array_element.ty;
-                    quote!(unimplemented!())
+                    quote!(#encoder.write_enum_array::<_, #element_ty>(#ident))
                 }
-                _ => {
-                    let inner_ty = &inner.ty;
-                    quote!({
-                        let tmp = #ident.to_value::<#inner_ty>();
-                        let #inner_ident = &tmp;
-                        #encode_inner
-                    })
+                Encoding::RawBits { num_bits } => {
+                    quote!(#encoder.write_enum_bits(#ident, #num_bits))
                 }
+                _ => quote!(#encoder.write_enum::<_, #inner_ty>(#ident)),
             }
         }
         Encoding::Manual => quote!(#encoder.write(#ident)),

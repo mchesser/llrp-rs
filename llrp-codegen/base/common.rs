@@ -166,9 +166,7 @@ impl<T: LLRPValue> LLRPValue for Option<T> {
 
     fn decode_tv(decoder: &mut Decoder, tv_id: u8) -> Result<Self> {
         match decoder.peek_param_type() {
-            Ok(ParameterType::Tv(ty)) if ty == tv_id => {
-                Ok(Some(decoder.read_tv(tv_id)?))
-            }
+            Ok(ParameterType::Tv(ty)) if ty == tv_id => Ok(Some(decoder.read_tv(tv_id)?)),
             _ => Ok(None),
         }
     }
@@ -269,11 +267,6 @@ impl Bits for u16 {
 
 pub trait LLRPEnumeration: Sized {
     fn from_value<T: Into<u32>>(value: T) -> Result<Self>;
-
-    fn from_vec<T: Into<u32>>(value: Vec<T>) -> Result<Vec<Self>> {
-        value.into_iter().map(|x| Self::from_value(x.into())).collect()
-    }
-
     fn to_value<T: Bits>(&self) -> T;
 }
 
@@ -344,6 +337,29 @@ impl<'a> Decoder<'a> {
         (0..self.read::<u16>()?).map(|_| decode(self)).collect()
     }
 
+    pub fn read_enum<T, U>(&mut self) -> Result<T>
+    where
+        T: LLRPEnumeration,
+        U: LLRPValue + Into<u32>,
+    {
+        T::from_value(self.read::<U>()?)
+    }
+
+    pub fn read_enum_bits<T>(&mut self, num_bits: u8) -> Result<T>
+    where
+        T: LLRPEnumeration,
+    {
+        self.read_bits(num_bits)
+    }
+
+    pub fn read_enum_array<T, U>(&mut self) -> Result<Vec<T>>
+    where
+        T: LLRPEnumeration,
+        U: LLRPValue + Into<u32>,
+    {
+        (0..self.read::<u16>()?).map(|_| T::from_value(self.read::<U>()?)).collect()
+    }
+
     fn check_param_type(&mut self, type_id: u16) -> Result<()> {
         match self.peek_param_type()? {
             ParameterType::Tv(id) if id as u16 == type_id => {
@@ -366,18 +382,16 @@ impl<'a> Decoder<'a> {
     }
 
     pub fn peek_param_type(&self) -> Result<ParameterType> {
-        let data = self.bytes;
-
-        if data.len() < 2 {
-            return Err(Error::InsufficientData { needed: 2, remaining: data.len() });
+        if self.bytes.len() < 2 {
+            return Err(Error::InsufficientData { needed: 2, remaining: self.bytes.len() });
         }
 
-        if data[0] & 0b1000_0000 != 0 {
-            return Ok(ParameterType::Tv(data[0] & 0b0111_1111));
+        if self.bytes[0] & 0b1000_0000 != 0 {
+            return Ok(ParameterType::Tv(self.bytes[0] & 0b0111_1111));
         }
 
         // [6-bit resv, 10-bit message type]
-        Ok(ParameterType::Tlv(u16::from_be_bytes([data[0], data[1]]) & 0b11_1111_1111))
+        Ok(ParameterType::Tlv(u16::from_be_bytes([self.bytes[0], self.bytes[1]]) & 0b11_1111_1111))
     }
 
     pub fn read<T: LLRPValue>(&mut self) -> Result<T> {
@@ -388,8 +402,18 @@ impl<'a> Decoder<'a> {
         T::decode_tv(self, tv_id)
     }
 
-    pub fn read_from_bits<T: Bits>(&mut self, num_bits: u8) -> Result<T> {
-        Ok(Bits::from_bits(self.read_bits(num_bits)?))
+    pub fn read_bits<T: Bits>(&mut self, num_bits: u8) -> Result<T> {
+        while self.valid_bits < num_bits {
+            self.bits = (self.bits << 8) | self.read::<u8>()? as u32;
+            self.valid_bits += 8;
+        }
+
+        let offset = self.valid_bits - num_bits;
+        let out = self.bits >> offset;
+        self.bits = self.bits & ((1 << offset) - 1);
+        self.valid_bits -= num_bits;
+
+        Ok(Bits::from_bits(out))
     }
 
     pub(crate) fn read_bytes(&mut self, num_bytes: usize) -> Result<&'a [u8]> {
@@ -401,20 +425,6 @@ impl<'a> Decoder<'a> {
         self.bytes = &self.bytes[num_bytes..];
 
         Ok(result)
-    }
-
-    pub(crate) fn read_bits(&mut self, num_bits: u8) -> Result<u32> {
-        while self.valid_bits < num_bits {
-            self.bits = (self.bits << 8) | self.read::<u8>()? as u32;
-            self.valid_bits += 8;
-        }
-
-        let offset = self.valid_bits - num_bits;
-        let out = self.bits >> offset;
-        self.bits = self.bits & ((1 << offset) - 1);
-        self.valid_bits -= num_bits;
-
-        Ok(out)
     }
 
     /// Ensures that all bytes were consumed when parsing the struct fields
@@ -442,7 +452,7 @@ impl<'a> Encoder<'a> {
         self.write_param_type(ParameterType::Tlv(tlv_id));
 
         let offset = self.buffer.len();
-        self.buffer.extend_from_slice(&[0, 0]);
+        self.write_bytes(&[0, 0]);
 
         encode(self);
 
@@ -454,20 +464,46 @@ impl<'a> Encoder<'a> {
     where
         T: LLRPValue,
     {
-        self.buffer.extend_from_slice(&(items.len() as u16).to_be_bytes());
+        self.write_bytes(&(items.len() as u16).to_be_bytes());
         for item in items {
             encode(self, item)
         }
     }
 
+    pub fn write_enum<T, U>(&mut self, item: &T)
+    where
+        T: LLRPEnumeration,
+        U: LLRPValue + Bits,
+    {
+        self.write(&item.to_value::<U>());
+    }
+
+    pub fn write_enum_bits<T>(&mut self, item: &T, num_bits: u8)
+    where
+        T: LLRPEnumeration,
+    {
+        let value = item.to_value::<u16>();
+        self.write_bits(&value, num_bits)
+    }
+
+    pub fn write_enum_array<T, U>(&mut self, items: &[T])
+    where
+        T: LLRPEnumeration,
+        U: LLRPValue + Bits,
+    {
+        self.write_bytes(&(items.len() as u16).to_be_bytes());
+        for item in items {
+            self.write_enum::<T, U>(item)
+        }
+    }
 
     fn write_param_type(&mut self, type_num: ParameterType) {
         match type_num {
             ParameterType::Tv(id) => {
-                self.buffer.push(id | 0b1000_0000);
+                self.write_bytes(&[id | 0b1000_0000]);
             }
             ParameterType::Tlv(id) => {
-                self.buffer.extend_from_slice(&id.to_be_bytes());
+                self.write_bytes(&id.to_be_bytes());
             }
         }
     }
@@ -480,22 +516,20 @@ impl<'a> Encoder<'a> {
         value.encode_tv(self, tv_id)
     }
 
-    pub fn write_to_bits<T: Bits>(&mut self, value: &T, num_bits: u8) {
-        self.write_bits(value.to_bits(), num_bits)
-    }
+    pub fn write_bits<T: Bits>(&mut self, value: &T, num_bits: u8) {
+        let bits = value.to_bits();
 
-    pub(crate) fn write_bytes(&mut self, bytes: &[u8]) {
-        self.buffer.extend_from_slice(bytes);
-    }
-
-    pub(crate) fn write_bits(&mut self, bits: u32, num_bits: u8) {
         self.bits = (self.bits << num_bits) | bits;
         self.valid_bits += num_bits;
 
         while self.valid_bits >= 8 {
-            self.buffer.push((self.bits & 0xFF) as u8);
+            self.write_bytes(&[(self.bits & 0xFF) as u8]);
             self.bits = self.bits >> 8;
             self.valid_bits -= 8;
         }
+    }
+
+    pub(crate) fn write_bytes(&mut self, bytes: &[u8]) {
+        self.buffer.extend_from_slice(bytes);
     }
 }

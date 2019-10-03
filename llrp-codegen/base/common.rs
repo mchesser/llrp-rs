@@ -136,23 +136,26 @@ impl LLRPValue for String {
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct BitArray {
+    pub num_bits: u16,
     pub bytes: Vec<u8>,
 }
 
 impl BitArray {
     pub fn from_bytes(bytes: impl Into<Vec<u8>>) -> BitArray {
-        BitArray { bytes: bytes.into() }
+        let bytes = bytes.into();
+        BitArray { num_bits: (bytes.len() * 8) as u16, bytes }
     }
 }
 
 impl LLRPValue for BitArray {
     fn decode(decoder: &mut Decoder) -> Result<Self> {
-        let num_bits = decoder.read::<u16>()? as usize;
-        Ok(BitArray { bytes: decoder.read_bytes(num_bits / 8)?.into() })
+        let num_bits = decoder.read::<u16>()?;
+        Ok(BitArray { num_bits, bytes: decoder.read_bytes(num_bits as usize / 8)?.into() })
     }
 
     fn encode(&self, encoder: &mut Encoder) {
-        encoder.write_bytes(&((self.bytes.len() / 8) as u16).to_be_bytes());
+        encoder.write_bytes(&self.num_bits.to_be_bytes());
+        encoder.write_bytes(&self.bytes);
     }
 }
 

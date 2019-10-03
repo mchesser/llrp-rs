@@ -410,13 +410,9 @@ impl<'a> Decoder<'a> {
             self.bits = (self.bits << 8) | self.read::<u8>()? as u32;
             self.valid_bits += 8;
         }
-
-        let offset = self.valid_bits - num_bits;
-        let out = self.bits >> offset;
-        self.bits = self.bits & ((1 << offset) - 1);
         self.valid_bits -= num_bits;
-
-        Ok(Bits::from_bits(out))
+        let mask = (1 << num_bits) - 1;
+        Ok(Bits::from_bits((self.bits >> self.valid_bits) & mask))
     }
 
     pub(crate) fn read_bytes(&mut self, num_bytes: usize) -> Result<&'a [u8]> {
@@ -526,9 +522,8 @@ impl<'a> Encoder<'a> {
         self.valid_bits += num_bits;
 
         while self.valid_bits >= 8 {
-            self.write_bytes(&[(self.bits & 0xFF) as u8]);
-            self.bits = self.bits >> 8;
             self.valid_bits -= 8;
+            self.write_bytes(&[((self.bits >> self.valid_bits) & 0xFF) as u8]);
         }
     }
 

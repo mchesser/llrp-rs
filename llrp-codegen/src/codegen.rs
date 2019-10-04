@@ -82,6 +82,18 @@ pub fn generate(definitions: Vec<Definition>) -> GeneratedCode {
                     _ => Err(crate::Error::UnknownMessageId(message_id))
                 }
             }
+
+            pub fn encode(&self, buffer: &mut Vec<u8>) {
+                match self {
+                    #(Self::#message_names(msg) => msg.encode(buffer),)*
+                }
+            }
+
+            pub fn message_type(&self) -> u16 {
+                match self {
+                    #(Self::#message_names(_) => #message_names::ID,)*
+                }
+            }
         }
     };
 

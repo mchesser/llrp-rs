@@ -435,6 +435,7 @@ dependencies = [
  "llrp-codegen 0.1.0",
  "pretty_assertions 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "rustfmt-nightly 1.4.8 (git+https://github.com/rust-lang/rustfmt)",
+ "serde 1.0.101 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]

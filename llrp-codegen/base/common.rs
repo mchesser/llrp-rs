@@ -68,7 +68,7 @@ pub trait TlvParameter: Sized {
     const ID: u16;
 }
 
-pub trait LLRPValue: Sized + std::fmt::Debug {
+pub trait LLRPValue: Sized {
     fn can_decode_type(_: u16) -> bool {
         false
     }
@@ -133,6 +133,7 @@ impl LLRPValue for String {
 }
 
 #[derive(Debug, Eq, PartialEq, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BitArray {
     pub num_bits: u16,
     pub bytes: Vec<u8>,

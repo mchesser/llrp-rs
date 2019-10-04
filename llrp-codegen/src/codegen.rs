@@ -22,7 +22,7 @@ impl std::fmt::Display for GeneratedCode {
         let choices = &self.choices;
 
         let body = quote! {
-            #[allow(bad_style, unused_imports, unused_mut, unreachable, dead_code, unused_variables)]
+            #[allow(bad_style, unused_imports, unused_mut, unused_variables)]
             pub mod messages {
                 use super::{*, parameters::*, enumerations::*, choices::*};
                 #(#messages)*
@@ -30,19 +30,19 @@ impl std::fmt::Display for GeneratedCode {
                 #message_enum
             }
 
-            #[allow(bad_style, unused_imports, unused_mut, unreachable, dead_code, unused_variables)]
+            #[allow(bad_style, unused_imports, unused_mut, unused_variables)]
             pub mod parameters {
                 use super::{*, enumerations::*, choices::*};
                 #(#parameters)*
             }
 
-            #[allow(bad_style, unused_imports, unused_mut, unreachable, dead_code, unused_variables)]
+            #[allow(bad_style, unused_imports, unused_mut, unused_variables)]
             pub mod enumerations {
                 use super::{*, parameters::*, choices::*};
                 #(#enumerations)*
             }
 
-            #[allow(bad_style, unused_imports, unused_mut, unreachable, dead_code, unused_variables)]
+            #[allow(bad_style, unused_imports, unused_mut, unused_variables)]
             pub mod choices {
                 use super::{*, parameters::*, enumerations::*};
                 #(#choices)*
@@ -232,6 +232,16 @@ fn define_tv_parameter(id: u8, ident: Ident, fields: &[Field]) -> TokenStream {
         quote!(#ident: #decoded?)
     });
 
+    let encoder = Ident::new("encoder", Span::call_site());
+    let encode_fields = fields.iter().map(|field| {
+        let ident = &field.ident;
+        let encode = encode_field(field, &encoder);
+        quote! {
+            let #ident = &self.#ident;
+            #encode;
+        }
+    });
+
     quote! {
         #[derive(Debug, Eq, PartialEq)]
         pub struct #ident {
@@ -243,6 +253,10 @@ fn define_tv_parameter(id: u8, ident: Ident, fields: &[Field]) -> TokenStream {
                 Ok(#ident {
                     #(#decode_fields,)*
                 })
+            }
+
+            fn encode(&self, encoder: &mut Encoder) {
+                #(#encode_fields)*
             }
 
             fn can_decode_type(type_num: u16) -> bool {

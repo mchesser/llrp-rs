@@ -80,9 +80,7 @@ pub trait LLRPValue: Sized + std::fmt::Debug {
         Self::decode(decoder)
     }
 
-    fn encode(&self, _encoder: &mut Encoder) {
-        unimplemented!()
-    }
+    fn encode(&self, encoder: &mut Encoder);
 
     fn encode_tv(&self, encoder: &mut Encoder, tv_id: u8) {
         encoder.write_param_type(ParameterType::Tv(tv_id));

@@ -2,8 +2,9 @@ use std::io;
 
 use byteorder::{BigEndian, ReadBytesExt};
 
-use crate::messages::Message;
+use crate::{messages::Message, LLRPMessage};
 
+#[derive(Debug, Clone)]
 pub struct BinaryMessage {
     pub ver: u8,
     pub message_type: u16,
@@ -12,10 +13,21 @@ pub struct BinaryMessage {
 }
 
 impl BinaryMessage {
+    pub fn from_message<T: LLRPMessage>(id: u32, message: T) -> crate::Result<BinaryMessage> {
+        let mut buffer = vec![];
+        message.encode(&mut buffer);
+        Ok(BinaryMessage { ver: 1, message_type: T::ID, id, value: buffer })
+    }
+
+    pub fn to_message<T: LLRPMessage>(&self) -> crate::Result<T> {
+        let (msg, _) = T::decode(&self.value)?;
+        Ok(msg)
+    }
+
     pub fn from_dynamic_message(id: u32, message: &Message) -> crate::Result<BinaryMessage> {
         let mut buffer = vec![];
         message.encode(&mut buffer);
-        Ok(BinaryMessage { ver: 1, message_type: message.message_type() , id, value: buffer })
+        Ok(BinaryMessage { ver: 1, message_type: message.message_type(), id, value: buffer })
     }
 
     pub fn to_dynamic_message(&self) -> crate::Result<Message> {

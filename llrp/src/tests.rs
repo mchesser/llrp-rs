@@ -869,6 +869,28 @@ fn get_reader_capabilities_response() {
 }
 
 #[test]
+fn custom_message() {
+    let bytes = &[
+        0x07, 0xff, 0x00, 0x00, 0x00, 0x13, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x65, 0x1a, 0x15,
+        0x00, 0x00, 0x00, 0x00,
+    ];
+
+    let raw = read_message(Cursor::new(bytes)).unwrap();
+
+    assert_eq!(raw.ver, 1);
+    assert_eq!(raw.message_type, CustomMessage::ID);
+    assert_eq!(raw.id, 1);
+    assert_eq!(raw.value.len(), 9);
+
+    let (msg, _) = CustomMessage::decode(&raw.value).unwrap();
+    assert_eq!(encode(&msg), raw.value);
+
+    assert_eq!(msg.vendor_identifier, 25882);
+    assert_eq!(msg.message_subtype, 21);
+    assert_eq!(msg.data, vec![0; 4]);
+}
+
+#[test]
 fn binary_roundtrip() {
     let bytes = &[
         0x04, 0x3f, 0x00, 0x00, 0x00, 0x20, 0x3a, 0xfb, 0x30, 0xa7, 0x00, 0xf6, 0x00, 0x16, 0x00,

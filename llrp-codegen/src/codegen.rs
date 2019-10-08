@@ -71,6 +71,8 @@ pub fn generate(definitions: Vec<Definition>) -> GeneratedCode {
     }
 
     let message_enum = quote! {
+        #[derive(Debug, Eq, PartialEq)]
+        #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
         pub enum Message {
             #(#message_names(#message_names),)*
         }
@@ -431,7 +433,8 @@ fn decode_field(field: &Field, decoder: &Ident) -> TokenStream {
                 _ => quote!(#decoder.read_enum::<#ty, #inner_ty>()),
             }
         }
-        Encoding::Manual => quote!(#decoder.read::<#ty>()),
+        Encoding::Primitive => quote!(#decoder.read::<#ty>()),
+        Encoding::Manual { wrapper } => quote!(#decoder.read::<#wrapper>().map(|x| x.into_owned())),
     }
 }
 
@@ -461,6 +464,7 @@ fn encode_field(field: &Field, encoder: &Ident) -> TokenStream {
                 _ => quote!(#encoder.write_enum::<_, #inner_ty>(#ident)),
             }
         }
-        Encoding::Manual => quote!(#encoder.write(#ident)),
+        Encoding::Primitive => quote!(#encoder.write(#ident)),
+        Encoding::Manual { wrapper } => quote!(#encoder.write(&#wrapper::wrap(#ident))),
     }
 }

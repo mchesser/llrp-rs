@@ -158,6 +158,30 @@ impl LLRPValue for BitArray {
     }
 }
 
+pub(crate) struct BytesToEnd<'a>(std::borrow::Cow<'a, [u8]>);
+
+impl<'a> BytesToEnd<'a> {
+    pub(crate) fn wrap(value: impl Into<std::borrow::Cow<'a, [u8]>>) -> Self {
+        Self(value.into())
+    }
+
+    pub(crate) fn into_owned(self) -> Vec<u8> {
+        self.0.into_owned()
+    }
+}
+
+impl<'a> LLRPValue for BytesToEnd<'a> {
+    fn decode(decoder: &mut Decoder) -> Result<Self> {
+        let bytes = decoder.bytes;
+        decoder.bytes = &[];
+        Ok(Self(bytes.to_vec().into()))
+    }
+
+    fn encode(&self, encoder: &mut Encoder) {
+        encoder.write_bytes(&self.0);
+    }
+}
+
 impl<T: LLRPValue> LLRPValue for Option<T> {
     fn decode(decoder: &mut Decoder) -> Result<Self> {
         match decoder.peek_param_type() {

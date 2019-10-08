@@ -36,8 +36,11 @@ pub enum Encoding {
     /// Represents an enum value encoded as a number of bits
     Enum { inner: Box<Field> },
 
-    /// Represents types that must be manually decoded
-    Manual,
+    /// Represents types that have primitive implementations
+    Primitive,
+
+    /// Represents types that are manually encoded/decoded with wrapper type
+    Manual { wrapper: Ident },
 }
 
 #[derive(Debug, Clone)]
@@ -112,7 +115,6 @@ pub fn parse_definitions(def: llrp_def::LLRPDef) -> Vec<Definition> {
             if let Some(llrp_def::Field::Annotation(_)) = fields.get(0) {
                 fields = &fields[1..];
             }
-
 
             let ident = Ident::new(name, Span::call_site());
 
@@ -231,21 +233,22 @@ fn type_of(type_name: &str) -> (TokenStream, Encoding) {
         "u14" => ("u16",  RawBits { num_bits: 14 }),
         "u15" => ("u16",  RawBits { num_bits: 15 }),
 
-        // Values with manual implementations
-        "u8"    => ("u8",       Manual),
-        "u16"   => ("u16",      Manual),
-        "u32"   => ("u32",      Manual),
-        "u64"   => ("u64",      Manual),
-        "u96"   => ("[u8; 12]", Manual),
-        "s8"    => ("i8",       Manual),
-        "s16"   => ("i16",      Manual),
-        "s32"   => ("i32",      Manual),
-        "s64"   => ("i64",      Manual),
-        "u1v"   => ("BitArray", Manual),
-        "utf8v" => ("String",   Manual),
+        // Values with primitive implementations
+        "u8"    => ("u8",       Primitive),
+        "u16"   => ("u16",      Primitive),
+        "u32"   => ("u32",      Primitive),
+        "u64"   => ("u64",      Primitive),
+        "u96"   => ("[u8; 12]", Primitive),
+        "s8"    => ("i8",       Primitive),
+        "s16"   => ("i16",      Primitive),
+        "s32"   => ("i32",      Primitive),
+        "s64"   => ("i64",      Primitive),
+        "u1v"   => ("BitArray", Primitive),
+        "utf8v" => ("String",   Primitive),
+        "bytesToEnd" => ("Vec<u8>", Manual { wrapper: Ident::new("BytesToEnd", Span::call_site()) }),
 
         // Arrays of values
-        "u8v" | "bytesToEnd" => ("Vec<u8>", ArrayOfT { inner: inner_field("u8") }),
+        "u8v"  => ("Vec<u8>", ArrayOfT { inner: inner_field("u8") }),
         "u16v" => ("Vec<u16>", ArrayOfT { inner: inner_field("u16") }),
         "u32v" => ("Vec<u32>", ArrayOfT { inner: inner_field("u32") }),
         "u64v" => ("Vec<u64>", ArrayOfT { inner: inner_field("u64") }),

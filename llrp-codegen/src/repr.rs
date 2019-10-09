@@ -50,6 +50,7 @@ pub enum Container {
     Option(TokenStream),
     OptionBox(TokenStream),
     Vec(TokenStream),
+    Vec1(TokenStream),
 }
 
 impl quote::ToTokens for Container {
@@ -62,6 +63,7 @@ impl quote::ToTokens for Container {
             Container::Option(ty) => quote!(Option<#ty>),
             Container::OptionBox(ty) => quote!(Option<Box<#ty>>),
             Container::Vec(ty) => quote!(Vec<#ty>),
+            Container::Vec1(ty) => quote!(Vec1<#ty>),
         });
     }
 }
@@ -303,7 +305,7 @@ fn map_field(
         (Repeat::ZeroOrOne, false) => Container::Option(base_type),
         (Repeat::ZeroOrOne, true) => Container::OptionBox(base_type),
         (Repeat::ZeroToN, _) => Container::Vec(base_type),
-        (Repeat::OneToN, _) => Container::Vec(base_type),
+        (Repeat::OneToN, _) => Container::Vec1(base_type),
     };
 
     Field { ident, ty, encoding }

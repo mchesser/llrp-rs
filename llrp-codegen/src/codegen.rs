@@ -315,8 +315,8 @@ fn define_enum(ident: Ident, variants: &[EnumVariant]) -> TokenStream {
         }
 
         impl crate::LLRPEnumeration for #ident {
-            fn from_value<T: Into<u32>>(value: T) -> crate::Result<Self> {
-                let result = match value.into() {
+            fn from_value<T: Bits>(value: T) -> crate::Result<Self> {
+                let result = match value.to_bits() {
                     #(#decode_matches,)*
                     other => return Err(crate::Error::InvalidVariant(other)),
                 };

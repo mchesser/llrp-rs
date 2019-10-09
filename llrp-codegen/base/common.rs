@@ -132,6 +132,7 @@ impl LLRPValue for String {
     }
 }
 
+/// Represents an array of bits stored as a byte array
 #[derive(Debug, Eq, PartialEq, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BitArray {
@@ -228,6 +229,9 @@ impl<T: LLRPValue> LLRPValue for Box<T> {
     }
 }
 
+/// Represents a vector that must contain at least 1 element
+pub type Vec1<T> = Vec<T>;
+
 impl<T: LLRPValue> LLRPValue for Vec<T> {
     fn decode(decoder: &mut Decoder) -> Result<Self> {
         let mut output = vec![];
@@ -258,6 +262,24 @@ pub trait Bits {
     fn to_bits(&self) -> u32;
 }
 
+macro_rules! impl_bits {
+    ($ty: ty) => {
+        impl Bits for $ty {
+            fn from_bits(bits: u32) -> Self {
+                bits as $ty
+            }
+
+            fn to_bits(&self) -> u32 {
+                *self as u32
+            }
+        }
+    };
+}
+
+impl_bits!(u8);
+impl_bits!(u16);
+impl_bits!(u32);
+
 impl Bits for bool {
     fn from_bits(bits: u32) -> Self {
         (bits & 1) != 0
@@ -271,28 +293,8 @@ impl Bits for bool {
     }
 }
 
-impl Bits for u8 {
-    fn from_bits(bits: u32) -> Self {
-        bits as u8
-    }
-
-    fn to_bits(&self) -> u32 {
-        *self as u32
-    }
-}
-
-impl Bits for u16 {
-    fn from_bits(bits: u32) -> Self {
-        bits as u16
-    }
-
-    fn to_bits(&self) -> u32 {
-        *self as u32
-    }
-}
-
 pub trait LLRPEnumeration: Sized {
-    fn from_value<T: Into<u32>>(value: T) -> Result<Self>;
+    fn from_value<T: Bits>(value: T) -> Result<Self>;
     fn to_value<T: Bits>(&self) -> T;
 }
 
@@ -366,7 +368,7 @@ impl<'a> Decoder<'a> {
     pub fn read_enum<T, U>(&mut self) -> Result<T>
     where
         T: LLRPEnumeration,
-        U: LLRPValue + Into<u32>,
+        U: LLRPValue + Bits,
     {
         T::from_value(self.read::<U>()?)
     }
@@ -381,7 +383,7 @@ impl<'a> Decoder<'a> {
     pub fn read_enum_array<T, U>(&mut self) -> Result<Vec<T>>
     where
         T: LLRPEnumeration,
-        U: LLRPValue + Into<u32>,
+        U: LLRPValue + Bits,
     {
         (0..self.read::<u16>()?).map(|_| T::from_value(self.read::<U>()?)).collect()
     }

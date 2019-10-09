@@ -174,7 +174,7 @@ fn add_ro_spec() {
                         tag_inventory_state_aware: false,
                         reserved: 0,
                         c1g2_filter: vec![],
-                        c1g2rf_control: Some(C1G2RFControl { mode_index: 0, tari: 0 }.into()),
+                        c1g2_rf_control: Some(C1G2RFControl { mode_index: 0, tari: 0 }.into()),
                         c1g2_singulation_control: Some(
                             C1G2SingulationControl {
                                 session: 1,

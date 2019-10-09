@@ -267,12 +267,13 @@ fn field_ident(name: &str) -> Ident {
     use heck::SnakeCase;
 
     match name {
-        "Match"      => Ident::new("match_", Span::call_site()),
-        "NumGPIs"    => Ident::new("num_gpis", Span::call_site()),
-        "NumGPOs"    => Ident::new("num_gpos", Span::call_site()),
-        "AntennaIDs" => Ident::new("antenna_ids", Span::call_site()),
-        "LLRPStatus" => Ident::new("status", Span::call_site()),
-        other        => Ident::new(&other.to_snake_case(), Span::call_site()),
+        "Match"         => Ident::new("match_", Span::call_site()),
+        "NumGPIs"       => Ident::new("num_gpis", Span::call_site()),
+        "NumGPOs"       => Ident::new("num_gpos", Span::call_site()),
+        "AntennaIDs"    => Ident::new("antenna_ids", Span::call_site()),
+        "LLRPStatus"    => Ident::new("status", Span::call_site()),
+        "C1G2RFControl" => Ident::new("c1g2_rf_control", Span::call_site()),
+        other           => Ident::new(&other.to_snake_case(), Span::call_site()),
     }
 }
 

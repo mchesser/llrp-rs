@@ -71,7 +71,7 @@ pub fn generate(definitions: Vec<Definition>) -> GeneratedCode {
     }
 
     let message_enum = quote! {
-        #[derive(Debug, Eq, PartialEq)]
+        #[derive(Debug, Clone, Eq, PartialEq)]
         #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
         pub enum Message {
             #(#message_names(#message_names),)*
@@ -97,6 +97,14 @@ pub fn generate(definitions: Vec<Definition>) -> GeneratedCode {
                 }
             }
         }
+
+        #(
+            impl From<#message_names> for Message {
+                fn from(message: #message_names) -> Self {
+                    Self::#message_names(message)
+                }
+            }
+        )*
     };
 
     let mut messages = vec![];
@@ -148,7 +156,7 @@ fn define_message(id: u16, ident: Ident, fields: &[Field]) -> TokenStream {
     });
 
     quote! {
-        #[derive(Debug, Eq, PartialEq)]
+        #[derive(Debug, Clone, Eq, PartialEq)]
         #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
         pub struct #ident {
             #(#field_defs,)*
@@ -199,7 +207,7 @@ fn define_parameter(id: u16, ident: Ident, fields: &[Field]) -> TokenStream {
     });
 
     quote! {
-        #[derive(Debug, Eq, PartialEq)]
+        #[derive(Debug, Clone, Eq, PartialEq)]
         #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
         pub struct #ident {
             #(#field_defs,)*
@@ -259,7 +267,7 @@ fn define_tv_parameter(id: u8, ident: Ident, fields: &[Field]) -> TokenStream {
     });
 
     quote! {
-        #[derive(Debug, Eq, PartialEq)]
+        #[derive(Debug, Clone, Eq, PartialEq)]
         #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
         pub struct #ident {
             #(#field_defs,)*
@@ -300,7 +308,7 @@ fn define_enum(ident: Ident, variants: &[EnumVariant]) -> TokenStream {
     }
 
     quote! {
-        #[derive(Debug, Eq, PartialEq)]
+        #[derive(Debug, Clone, Eq, PartialEq)]
         #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
         pub enum #ident {
             #(#variant_defs,)*
@@ -360,7 +368,7 @@ fn define_choice(ident: Ident, choices: &[Field]) -> TokenStream {
     }
 
     quote! {
-        #[derive(Debug, Eq, PartialEq)]
+        #[derive(Debug, Clone, Eq, PartialEq)]
         #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
         pub enum #ident {
             #(#tlv_variants(#tlv_variants),)*

@@ -17,6 +17,18 @@ fn encode<M: LLRPMessage>(message: &M) -> Vec<u8> {
     buffer
 }
 
+fn check_roundtrip(bytes: &[u8])  {
+    let raw = read_message(Cursor::new(bytes)).unwrap();
+    let msg = raw.to_dynamic_message().unwrap();
+
+    let encoded = BinaryMessage::from_dynamic_message(raw.id, &msg).unwrap();
+
+    let mut encoded_bytes = Vec::new();
+    write_message(Cursor::new(&mut encoded_bytes), encoded).unwrap();
+
+    assert_eq!(encoded_bytes, bytes);
+}
+
 #[test]
 fn reader_event_notifications_conn_attempt() {
     let bytes = &[
@@ -24,6 +36,8 @@ fn reader_event_notifications_conn_attempt() {
         0x80, 0x00, 0x0c, 0x00, 0x05, 0x88, 0x80, 0x11, 0x9f, 0x8e, 0xad, 0x01, 0x00, 0x00, 0x06,
         0x00, 0x00,
     ];
+    check_roundtrip(bytes);
+
     let raw = read_message(Cursor::new(bytes)).unwrap();
 
     assert_eq!(raw.ver, 1);
@@ -44,6 +58,8 @@ fn reader_event_notifications_conn_attempt() {
 #[test]
 fn enable_events_and_reports() {
     let bytes = &[0x04, 0x40, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x00, 0x08];
+    check_roundtrip(bytes);
+
     let raw = read_message(Cursor::new(bytes)).unwrap();
 
     assert_eq!(raw.ver, 1);
@@ -59,6 +75,8 @@ fn enable_events_and_reports() {
 fn delete_access_spec() {
     let bytes =
         &[0x04, 0x29, 0x00, 0x00, 0x00, 0x0e, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x01, 0xaf];
+    check_roundtrip(bytes);
+
     let raw = read_message(Cursor::new(bytes)).unwrap();
 
     assert_eq!(raw.ver, 1);
@@ -81,6 +99,8 @@ fn delete_access_spec_result_error() {
         0x20, 0x3a, 0x20, 0x69, 0x6e, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x01, 0x20, 0x00, 0x08, 0x00,
         0x01, 0x01, 0x2c,
     ];
+    check_roundtrip(bytes);
+
     let raw = read_message(Cursor::new(bytes)).unwrap();
 
     assert_eq!(raw.ver, 1);
@@ -104,6 +124,8 @@ fn delete_access_spec_result_error() {
 fn delete_ro_spec() {
     let bytes =
         &[0x04, 0x15, 0x00, 0x00, 0x00, 0x0e, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x00, 0x00, 0x01];
+    check_roundtrip(bytes);
+
     let raw = read_message(Cursor::new(bytes)).unwrap();
 
     assert_eq!(raw.ver, 1);
@@ -128,6 +150,7 @@ fn add_ro_spec() {
         0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x01, 0x50, 0x00, 0x0b, 0x40, 0x00, 0x01, 0x00, 0x00,
         0x00, 0x00,
     ];
+    check_roundtrip(bytes);
 
     let raw = read_message(Cursor::new(bytes)).unwrap();
 
@@ -206,6 +229,8 @@ pub fn add_ro_spec_response() {
         0x04, 0x1e, 0x00, 0x00, 0x00, 0x12, 0x00, 0x00, 0x00, 0x0f, 0x01, 0x1f, 0x00, 0x08, 0x00,
         0x00, 0x00, 0x00,
     ];
+    check_roundtrip(bytes);
+
     let raw = read_message(Cursor::new(bytes)).unwrap();
 
     assert_eq!(raw.ver, 1);
@@ -227,6 +252,8 @@ pub fn add_ro_spec_response() {
 fn enable_ro_spec() {
     let bytes =
         &[0x04, 0x18, 0x00, 0x00, 0x00, 0x0e, 0x00, 0x00, 0x00, 0x11, 0x00, 0x00, 0x00, 0x01];
+    check_roundtrip(bytes);
+
     let raw = read_message(Cursor::new(bytes)).unwrap();
 
     assert_eq!(raw.ver, 1);
@@ -243,6 +270,8 @@ fn enable_ro_spec() {
 #[test]
 fn ro_access_report_simple() {
     let bytes = &[0x04, 0x3d, 0x00, 0x00, 0x00, 0x0a, 0x3a, 0xfb, 0x30, 0xa8];
+    check_roundtrip(bytes);
+
     let raw = read_message(Cursor::new(bytes)).unwrap();
 
     assert_eq!(raw.ver, 1);
@@ -260,6 +289,8 @@ fn ro_access_report_simple() {
 #[test]
 fn close_connection() {
     let bytes = &[0x04, 0x0e, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x00, 0x23];
+    check_roundtrip(bytes);
+
     let raw = read_message(Cursor::new(bytes)).unwrap();
 
     assert_eq!(raw.ver, 1);
@@ -277,6 +308,8 @@ pub fn close_connection_response() {
         0x04, 0x04, 0x00, 0x00, 0x00, 0x12, 0x00, 0x00, 0x00, 0x23, 0x01, 0x1f, 0x00, 0x08, 0x00,
         0x00, 0x00, 0x00,
     ];
+    check_roundtrip(bytes);
+
     let raw = read_message(Cursor::new(bytes)).unwrap();
 
     assert_eq!(raw.ver, 1);
@@ -301,6 +334,8 @@ fn ro_access_report_inventory() {
         0x0b, 0x7f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x51, 0x02, 0x38, 0x81, 0x00, 0x01,
         0x86, 0xbc, 0x82, 0x00, 0x05, 0x88, 0x80, 0x19, 0x4b, 0xa9, 0xd5,
     ];
+    check_roundtrip(bytes);
+
     let raw = read_message(Cursor::new(bytes)).unwrap();
 
     assert_eq!(raw.ver, 1);
@@ -347,6 +382,8 @@ fn add_access_spec_read() {
         0x60, 0x00, 0x20, 0x00, 0x08, 0xff, 0x00, 0x08, 0x0b, 0x01, 0x55, 0x00, 0x0f, 0x00, 0x6f,
         0x00, 0x00, 0x00, 0x00, 0xc0, 0x00, 0x00, 0x00, 0x10, 0x00, 0xef, 0x00, 0x05, 0x00,
     ];
+    check_roundtrip(bytes);
+
     let raw = read_message(Cursor::new(bytes)).unwrap();
 
     assert_eq!(raw.ver, 1);
@@ -409,6 +446,8 @@ fn ro_access_report_read_zero() {
         0x86, 0xbc, 0x82, 0x00, 0x05, 0x88, 0x80, 0x19, 0x83, 0x92, 0xa9, 0x01, 0x5d, 0x00, 0x09,
         0x02, 0x00, 0x6f, 0x00, 0x00,
     ];
+    check_roundtrip(bytes);
+
     let raw = read_message(Cursor::new(bytes)).unwrap();
 
     assert_eq!(raw.ver, 1);
@@ -461,6 +500,8 @@ fn ro_access_report_read() {
         0x62, 0x34, 0x84, 0xae, 0x99, 0x9c, 0x21, 0x48, 0x71, 0x58, 0x6d, 0x7e, 0xc4, 0xfc, 0xc3,
         0x2a, 0x29, 0x87, 0xfa, 0x6b, 0x52, 0xab,
     ];
+    check_roundtrip(bytes);
+
     let raw = read_message(Cursor::new(bytes)).unwrap();
 
     assert_eq!(raw.ver, 1);
@@ -516,6 +557,8 @@ fn add_access_spec_blockwrite() {
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x01, 0x00, 0x21, 0x00, 0xef, 0x00, 0x05,
         0x00,
     ];
+    check_roundtrip(bytes);
+
     let raw = read_message(Cursor::new(bytes)).unwrap();
 
     assert_eq!(raw.ver, 1);
@@ -578,6 +621,8 @@ fn ro_access_report_blockwrite() {
         0x86, 0xbc, 0x82, 0x00, 0x05, 0x88, 0x80, 0x19, 0x7f, 0xbd, 0xdd, 0x01, 0x62, 0x00, 0x09,
         0x00, 0x00, 0x6f, 0x00, 0x01,
     ];
+    check_roundtrip(bytes);
+
     let raw = read_message(Cursor::new(bytes)).unwrap();
 
     assert_eq!(raw.ver, 1);
@@ -622,6 +667,8 @@ fn ro_access_report_blockwrite() {
 #[test]
 fn get_reader_capabilities() {
     let bytes = &[0x04, 0x01, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x00, 0x00, 0x00, 0x00];
+    check_roundtrip(bytes);
+
     let raw = read_message(Cursor::new(bytes)).unwrap();
 
     assert_eq!(raw.ver, 1);
@@ -742,6 +789,8 @@ fn get_reader_capabilities_response() {
         0x05, 0xdc, 0x00, 0x00, 0x18, 0x6a, 0x00, 0x00, 0x18, 0x6a, 0x00, 0x00, 0x00, 0x00, 0x01,
         0x47, 0x00, 0x07, 0x40, 0x00, 0x02,
     ];
+    check_roundtrip(bytes);
+
     let raw = read_message(Cursor::new(bytes)).unwrap();
 
     assert_eq!(raw.ver, 1);
@@ -874,6 +923,7 @@ fn custom_message() {
         0x07, 0xff, 0x00, 0x00, 0x00, 0x13, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x65, 0x1a, 0x15,
         0x00, 0x00, 0x00, 0x00,
     ];
+    check_roundtrip(bytes);
 
     let raw = read_message(Cursor::new(bytes)).unwrap();
 
@@ -888,23 +938,4 @@ fn custom_message() {
     assert_eq!(msg.vendor_identifier, 25882);
     assert_eq!(msg.message_subtype, 21);
     assert_eq!(msg.data, vec![0; 4]);
-}
-
-#[test]
-fn binary_roundtrip() {
-    let bytes = &[
-        0x04, 0x3f, 0x00, 0x00, 0x00, 0x20, 0x3a, 0xfb, 0x30, 0xa7, 0x00, 0xf6, 0x00, 0x16, 0x00,
-        0x80, 0x00, 0x0c, 0x00, 0x05, 0x88, 0x80, 0x11, 0x9f, 0x8e, 0xad, 0x01, 0x00, 0x00, 0x06,
-        0x00, 0x00,
-    ];
-
-    let raw = read_message(Cursor::new(bytes)).unwrap();
-    let msg = raw.to_dynamic_message().unwrap();
-
-    let encoded = BinaryMessage::from_dynamic_message(raw.id, &msg).unwrap();
-
-    let mut encoded_bytes = Vec::new();
-    write_message(Cursor::new(&mut encoded_bytes), encoded).unwrap();
-
-    assert_eq!(encoded_bytes, bytes);
 }

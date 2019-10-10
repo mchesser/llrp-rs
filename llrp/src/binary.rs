@@ -61,7 +61,7 @@ pub fn read_message<R: io::Read>(mut reader: R) -> io::Result<BinaryMessage> {
 
 pub fn write_message<W: io::Write>(mut writer: W, message: BinaryMessage) -> io::Result<()> {
     let prefix = [
-        ((message.ver & 0b111) << 2) | (message.message_type << 8) as u8,
+        ((message.ver & 0b111) << 2) | (message.message_type >> 8) as u8,
         message.message_type as u8,
     ];
 
